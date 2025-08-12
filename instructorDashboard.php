@@ -173,7 +173,7 @@ $phone = $user['phone'] ?? '';
             <div class="user-menu">
                 <span>Welcome back,<?= htmlspecialchars($full_name) ?></span>
                 <div class="user-avatar"><?= htmlspecialchars($initials) ?></div>
-                <button onclick="logout()" style="background: black; border: 1px solid white; color: white; padding: 0.5rem 1rem; border-radius: 4px; cursor: pointer; color: white">Logout</button>
+                <button onclick="logout()" class="logout-btn">Logout</button>
             </div>
         </div>
     </div>

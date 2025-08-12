@@ -3,6 +3,7 @@ session_start();
 require_once 'connection.php';
 $message = '';
 $messageType = '';
+
 // Security validation
 if (!isset($_SESSION['user_id']) || $_SESSION['user_role'] !== 'admin') {
     header("Location: account.php");
@@ -19,7 +20,7 @@ $user_id = $_SESSION['user_id'];
 $user = null;
 
 try {
-    $stmt = $pdo->prepare("SELECT accounts_id, sur_name, other_name, email, phone, fullname FROM accounts WHERE accounts_id = ? AND role = 'admin'");
+    $stmt = $pdo->prepare("SELECT accounts_id, sur_name, other_name, email, phone, role FROM accounts WHERE accounts_id = ? AND role = 'admin'");
     $stmt->execute([$user_id]);
     $user = $stmt->fetch(PDO::FETCH_ASSOC);
 
@@ -32,7 +33,8 @@ try {
     error_log("Database error in dashboard: " . $e->getMessage());
     die("Something went wrong. Please try again later.");
 }
-// Handle Add/Edit User form submission
+
+// Handle Add/Edit Student form submission
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     // Verify CSRF token
     if (!isset($_POST['csrf_token']) || $_POST['csrf_token'] !== $_SESSION['csrf_token']) {
@@ -40,17 +42,19 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         $messageType = "error";
     } else {
         // Sanitize and validate input
-        $staff_Id = trim($_POST['staffId']);
-        $firstName = htmlspecialchars(trim($_POST['sur_name']));
-        $lastName = htmlspecialchars(trim($_POST['other_name']));
+        $studentId = trim($_POST['studentId']);
+        $surName = htmlspecialchars(trim($_POST['sur_name']));
+        $otherName = htmlspecialchars(trim($_POST['other_name']));
         $email = filter_var(trim($_POST['email']), FILTER_SANITIZE_EMAIL);
         $phone = htmlspecialchars(trim($_POST['phone']));
-        $role = htmlspecialchars(trim($_POST['role']));
+        $program = htmlspecialchars(trim($_POST['program']));
+        $level = htmlspecialchars(trim($_POST['level']));
         $password = $_POST['password'] ?? '';
-        $edit_user_id = $_POST['edit_user_id'] ?? '';
+        $edit_student_id = $_POST['edit_student_id'] ?? '';
 
         // Validation
-        if (empty($staff_Id) || empty($firstName) || empty($lastName) || empty($email) || empty($phone) || empty($role) || (empty($password) && !$edit_user_id)) {
+        if (empty($studentId) || empty($surName) || empty($otherName) || empty($email) || 
+            empty($phone) || empty($program) || empty($level) || (empty($password) && !$edit_student_id)) {
             $message = 'All fields are required';
             $messageType = "error";
         } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
@@ -58,10 +62,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             $messageType = 'error';
         } else {
             try {
-                if ($edit_user_id) {
-                    // Update existing user
-                    $params = [$firstName, $lastName, $email, $phone, $role];
-                    $sql = "UPDATE accounts SET sur_name=?, other_name=?, email=?, phone=?, role=?";
+                if ($edit_student_id) {
+                    // Update existing student
+                    $pdo->beginTransaction();
+                    
+                    // Update accounts table
+                    $params = [$surName, $otherName, $email, $phone];
+                    $sql = "UPDATE accounts SET sur_name=?, other_name=?, email=?, phone=?";
                     
                     if (!empty($password)) {
                         $hashedPassword = password_hash($password, PASSWORD_DEFAULT);
@@ -70,18 +77,21 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                     }
                     
                     $sql .= " WHERE accounts_id=?";
-                    $params[] = $staff_Id;
+                    $params[] = $studentId;
                     
                     $stmt = $pdo->prepare($sql);
-                    if ($stmt->execute($params)) {
-                        $message = 'User updated successfully!';
-                        $messageType = 'success';
-                    } else {
-                        $message = 'Error updating user.';
-                        $messageType = 'error';
-                    }
+                    $stmt->execute($params);
+
+                    // Update students table
+                    $stmt = $pdo->prepare("UPDATE students SET program=?, level=? WHERE accounts_id=?");
+                    $stmt->execute([$program, $level, $studentId]);
+
+                    $pdo->commit();
+                    
+                    $message = 'Student updated successfully!';
+                    $messageType = 'success';
                 } else {
-                    // Create new user
+                    // Create new student
                     // Check for duplicate email
                     $stmt = $pdo->prepare("SELECT accounts_id FROM accounts WHERE email = ?");
                     $stmt->execute([$email]);
@@ -89,35 +99,43 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                         $message = 'Email already exists';
                         $messageType = "error";
                     } else {
-                        // Check for duplicate staff ID
+                        // Check for duplicate student ID
                         $stmt = $pdo->prepare("SELECT accounts_id FROM accounts WHERE accounts_id = ?");
-                        $stmt->execute([$staff_Id]);
+                        $stmt->execute([$studentId]);
                         if ($stmt->fetch()) {
-                            $message = 'Staff ID already exists';
+                            $message = 'Student ID already exists';
                             $messageType = "error";
                         } else {
-                            // Insert new user
+                            // Insert new student
                             $hashedPassword = password_hash($password, PASSWORD_DEFAULT);
                             $verificationToken = bin2hex(random_bytes(16));
+                            $academicYear = date('n') >= 9 ? date('Y') . '-' . (date('Y') + 1) : (date('Y') - 1) . '-' . date('Y');
                             
+                            $pdo->beginTransaction();
+                            
+                            // Insert into accounts table
                             $stmt = $pdo->prepare("INSERT INTO accounts 
                                 (accounts_id, sur_name, other_name, email, pass, verification_token, phone, role, created_at, is_active, is_verified) 
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), 1, 1)");
-                                
-                            if ($stmt->execute([$staff_Id, $firstName, $lastName, $email, $hashedPassword, $verificationToken, $phone, $role])) {
-                                $message = 'Account created successfully!';
-                                $messageType = 'success';
-                                // Clear form after successful submission
-                                $_POST = array();
-                            } else {
-                                $errorInfo = $stmt->errorInfo();
-                                $message = 'Error creating account: ' . $errorInfo[2];
-                                $messageType = 'error';
-                            }
+                                VALUES (?, ?, ?, ?, ?, ?, ?, 'student', NOW(), 1, 1)");
+                            $stmt->execute([$studentId, $surName, $otherName, $email, $hashedPassword, $verificationToken, $phone]);
+
+                            // Insert into students table
+                            $stmt = $pdo->prepare("INSERT INTO students 
+                                (accounts_id, program, level, semester, academic_year)
+                                VALUES (?, ?, ?, 'Semester 1', ?)");
+                            $stmt->execute([$studentId, $program, $level, $academicYear]);
+
+                            $pdo->commit();
+                            
+                            $message = 'Student account created successfully!';
+                            $messageType = 'success';
+                            // Clear form after successful submission
+                            $_POST = array();
                         }
                     }
                 }
             } catch (PDOException $e) {
+                $pdo->rollBack();
                 $message = 'Database error: ' . $e->getMessage();
                 $messageType = 'error';
             }
@@ -126,51 +144,71 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 }
 
 // Handle edit request (populate form)
-$edit_user = null;
-if (isset($_GET['edit_user_id'])) {
+$edit_student = null;
+if (isset($_GET['edit_student_id'])) {
     try {
-        $edit_id = $_GET['edit_user_id'];
-        $stmt = $pdo->prepare("SELECT * FROM accounts WHERE accounts_id = ?");
+        $edit_id = $_GET['edit_student_id'];
+        // Get student data from both accounts and students tables
+        $stmt = $pdo->prepare("SELECT a.*, s.program, s.level 
+                              FROM accounts a 
+                              JOIN students s ON a.accounts_id = s.accounts_id 
+                              WHERE a.accounts_id = ?");
         $stmt->execute([$edit_id]);
-        $edit_user = $stmt->fetch(PDO::FETCH_ASSOC);
+        $edit_student = $stmt->fetch(PDO::FETCH_ASSOC);
     } catch (PDOException $e) {
-        $message = 'Error fetching user data: ' . $e->getMessage();
+        $message = 'Error fetching student data: ' . $e->getMessage();
         $messageType = 'error';
     }
 }
 
 // Handle delete request
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_user_id'])) {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_student_id'])) {
     // Verify CSRF token
     if (!isset($_POST['csrf_token']) || $_POST['csrf_token'] !== $_SESSION['csrf_token']) {
         $message = 'Invalid CSRF token';
         $messageType = 'error';
     } else {
         try {
-            $delete_id = $_POST['delete_user_id'];
+            $delete_id = $_POST['delete_student_id'];
+            $pdo->beginTransaction();
+            
+            // Delete from students table first
+            $stmt = $pdo->prepare("DELETE FROM students WHERE accounts_id = ?");
+            $stmt->execute([$delete_id]);
+            
+            // Then delete from accounts table
             $stmt = $pdo->prepare("DELETE FROM accounts WHERE accounts_id = ?");
             if ($stmt->execute([$delete_id])) {
-                $message = 'User deleted successfully';
+                $pdo->commit();
+                $message = 'Student deleted successfully';
                 $messageType = 'success';
+                header("Location: addStudents.php");
+                exit;
             } else {
-                $message = 'Error deleting user';
+                $pdo->rollBack();
+                $message = 'Error deleting student';
                 $messageType = 'error';
             }
-            header("Location: addusers.php");
-            exit;
         } catch (PDOException $e) {
-            $message = 'Error deleting user: ' . $e->getMessage();
+            $pdo->rollBack();
+            $message = 'Error deleting student: ' . $e->getMessage();
             $messageType = 'error';
         }
     }
 }
 
-// Fetch all users
+// Fetch all students with their details
 try {
-    $users = $pdo->query("SELECT accounts_id, sur_name, other_name, email, phone, role FROM accounts ORDER BY accounts_id")->fetchAll(PDO::FETCH_ASSOC);
+    $stmt = $pdo->query("SELECT a.accounts_id, a.sur_name, a.other_name, a.email, a.phone, a.role, 
+                         s.program, s.level, s.semester 
+                         FROM accounts a 
+                         JOIN students s ON a.accounts_id = s.accounts_id 
+                         WHERE a.role = 'student' 
+                         ORDER BY a.accounts_id");
+    $students = $stmt->fetchAll(PDO::FETCH_ASSOC);
 } catch (PDOException $e) {
-    $users = [];
-    $message = 'Error fetching users: ' . $e->getMessage();
+    $students = [];
+    $message = 'Error fetching students: ' . $e->getMessage();
     $messageType = 'error';
 }
 
@@ -191,7 +229,7 @@ $initials = getUserInitials($full_name);
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CodeLab - User Management</title>
+    <title>CodeLab - Student Management</title>
     <link rel="stylesheet" href="dasboard.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <style>
@@ -320,9 +358,9 @@ $initials = getUserInitials($full_name);
     </style>
 </head>
 <body>
-    <div class="header">
+   <div class="header">
         <div class="header-content">
-            <div style="display: flex; align-items: center; gap: 1rem;">
+            <div style="">
                 <div class="hamburger" onclick="toggleSidebar()">
                     <span></span>
                     <span></span>
@@ -341,7 +379,7 @@ $initials = getUserInitials($full_name);
     <div class="overlay" onclick="closeSidebar()"></div>
 
     <div class="main-container">
-           <nav class="sidebar" id="sidebar">
+        <nav class="sidebar" id="sidebar">
             <ul class="sidebar-menu">
                 <li class="sidebar-item">
                     <a href="adminDashboard.php?view=profile" class="sidebar-link" onclick="showPage('profile', event)">
@@ -356,13 +394,13 @@ $initials = getUserInitials($full_name);
                     </a>
                 </li>
                 <li class="sidebar-item">
-                    <a href="addusers.php" class="sidebar-link active">
+                    <a href="addusers.php" class="sidebar-link">
                         <i class="fas fa-user-plus sidebar-icon"></i>
                         <span>Add Instructors</span>
                     </a>
                 </li>
                 <li class="sidebar-item">
-                    <a href="addStudents.php" class="sidebar-link">
+                    <a href="addStudents.php" class="sidebar-link active">
                         <i class="fas fa-user-graduate sidebar-icon"></i>
                         <span>Add Students</span>
                     </a>
@@ -390,106 +428,125 @@ $initials = getUserInitials($full_name);
         <main class="content-area">
             <div id="add-users" class="page-section active">
                 <div class="section-card">
-                    <h2 class="section-title"><?= $edit_user ? '✏️ Edit Instructor' : '➕ Add New Instructor' ?></h2>
+                    <h2 class="section-title"><?= $edit_student ? '✏️ Edit Student' : '➕ Add New Student' ?></h2>
                     <?php if ($message): ?>
                         <div class="message <?= htmlspecialchars($messageType) ?>"><?= htmlspecialchars($message) ?></div>
                     <?php endif; ?>
-                    <form id="addUserForm" class="add-user-form" method="POST" action="<?= htmlspecialchars($_SERVER['PHP_SELF']) ?>">
+                    <form id="addStudentForm" class="add-user-form" method="POST" action="<?= htmlspecialchars($_SERVER['PHP_SELF']) ?>">
                         <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
-                        <?php if ($edit_user): ?>
-                            <input type="hidden" name="edit_user_id" value="<?= htmlspecialchars($edit_user['accounts_id'] ?: '') ?>">
+                        <?php if ($edit_student): ?>
+                            <input type="hidden" name="edit_student_id" value="<?= htmlspecialchars($edit_student['accounts_id']) ?>">
                         <?php endif; ?>
                         <div class="form-group">
-                            <label for="staffId" class="form-label">Staff ID</label>
-                            <input type="text" id="staffId" name="staffId" class="form-input" required 
-                                   value="<?= isset($edit_user['accounts_id']) ? htmlspecialchars($edit_user['accounts_id']) : '' ?>" 
-                                   <?= isset($edit_user) ? 'readonly' : '' ?>>
+                            <label for="studentId" class="form-label">Student ID</label>
+                            <input type="text" id="studentId" name="studentId" class="form-input" required 
+                                   value="<?= isset($edit_student['accounts_id']) ? htmlspecialchars($edit_student['accounts_id']) : '' ?>" 
+                                   <?= isset($edit_student) ? 'readonly' : '' ?>>
                         </div>
                         <div class="form-group">
-                            <label for="firstName" class="form-label">Surname</label>
-                            <input type="text" id="firstName" name="sur_name" class="form-input" required 
-                                   value="<?= htmlspecialchars($edit_user['sur_name'] ?? '') ?>">
+                            <label for="sur_name" class="form-label">Surname</label>
+                            <input type="text" id="sur_name" name="sur_name" class="form-input" required 
+                                   value="<?= htmlspecialchars($edit_student['sur_name'] ?? '') ?>">
                         </div>
                         <div class="form-group">
-                            <label for="lastName" class="form-label">Other Name</label>
-                            <input type="text" id="lastName" name="other_name" class="form-input" required 
-                                   value="<?= htmlspecialchars($edit_user['other_name'] ?? '') ?>">
+                            <label for="other_name" class="form-label">Other Name</label>
+                            <input type="text" id="other_name" name="other_name" class="form-input" required 
+                                   value="<?= htmlspecialchars($edit_student['other_name'] ?? '') ?>">
                         </div>
                         <div class="form-group">
                             <label for="email" class="form-label">Email</label>
                             <input type="email" id="email" name="email" class="form-input" required 
-                                   value="<?= htmlspecialchars($edit_user['email'] ?? '') ?>">
+                                   value="<?= htmlspecialchars($edit_student['email'] ?? '') ?>">
                         </div>
                         <div class="form-group">
                             <label for="phone" class="form-label">Phone Number</label>
                             <input type="tel" id="phone" name="phone" class="form-input" required 
-                                   value="<?= htmlspecialchars($edit_user['phone'] ?? '') ?>">
+                                   value="<?= htmlspecialchars($edit_student['phone'] ?? '') ?>">
                         </div>
                         <div class="form-group">
-                            <label for="role" class="form-label">Role</label>
-                            <select id="role" name="role" class="form-select" required>
-                                <option value="">Select Role</option>
-                                <option value="student" <?= isset($edit_user['role']) && $edit_user['role'] == 'student' ? 'selected' : '' ?>>Student</option>
-                                <option value="instructor" <?= (isset($edit_user['role']) && $edit_user['role'] == 'instructor' ? 'selected' : '') ?>>Instructor</option>
-                                <option value="admin" <?= (isset($edit_user['role']) && $edit_user['role'] == 'admin' ? 'selected' : '') ?>>Admin</option>
+                            <label for="program" class="form-label">Program</label>
+                            <select id="program" name="program" class="form-select" required>
+                                <option value="">Select Program</option>
+                                <option value="Computer Science" <?= isset($edit_student['program']) && $edit_student['program'] == 'Computer Science' ? 'selected' : '' ?>>Computer Science</option>
+                                <option value="Information Technology" <?= isset($edit_student['program']) && $edit_student['program'] == 'Information Technology' ? 'selected' : '' ?>>Information Technology</option>
+                                <option value="Software Engineering" <?= isset($edit_student['program']) && $edit_student['program'] == 'Software Engineering' ? 'selected' : '' ?>>Software Engineering</option>
+                                <option value="Data Science" <?= isset($edit_student['program']) && $edit_student['program'] == 'Data Science' ? 'selected' : '' ?>>Data Science</option>
                             </select>
                         </div>
                         <div class="form-group">
-                            <label for="password" class="form-label"><?= $edit_user ? 'New Password (leave blank to keep current)' : 'Password' ?></label>
+                            <label for="level" class="form-label">Level</label>
+                            <select id="level" name="level" class="form-select" required>
+                                <option value="">Select Level</option>
+                                <option value="100" <?= isset($edit_student['level']) && $edit_student['level'] == '100' ? 'selected' : '' ?>>100</option>
+                                <option value="200" <?= isset($edit_student['level']) && $edit_student['level'] == '200' ? 'selected' : '' ?>>200</option>
+                                <option value="300" <?= isset($edit_student['level']) && $edit_student['level'] == '300' ? 'selected' : '' ?>>300</option>
+                                <option value="400" <?= isset($edit_student['level']) && $edit_student['level'] == '400' ? 'selected' : '' ?>>400</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="password" class="form-label"><?= $edit_student ? 'New Password (leave blank to keep current)' : 'Password' ?></label>
                             <input type="password" id="password" name="password" class="form-input" 
-                                   <?= $edit_user ? '' : 'required' ?>>
+                                   <?= $edit_student ? '' : 'required' ?>>
                         </div>
                         <div class="form-group full-width">
                             <div class="form-buttons">
-                                <button type="button" class="btn btn-secondary" onclick="window.location='addusers.php'">Cancel</button>
-                                <button type="submit" class="btn btn-primary"><?= $edit_user ? 'Update User' : 'Add User' ?></button>
+                                <button type="button" class="btn btn-secondary" onclick="window.location='addStudents.php'">Cancel</button>
+                                <button type="submit" class="btn btn-primary"><?= $edit_student ? 'Update Student' : 'Add Student' ?></button>
                             </div>
                         </div>
                     </form>
                 </div>
                 
                 <div class="section-card" style="margin-top: 2rem;">
-                    <h2 class="section-title">👥 User Management</h2>
+                    <h2 class="section-title">👥 Student Management</h2>
                     <div class="search-filter">
-                        <input type="text" id="searchInput" class="search-input" placeholder="Search users..." onkeyup="searchUsers()">
-                        <select id="roleFilter" class="filter-select" onchange="filterUsers()">
-                            <option value="">All Roles</option>
-                            <option value="student">Student</option>
-                            <option value="instructor">Instructor</option>
-                            <option value="admin">Admin</option>
+                        <input type="text" id="searchInput" class="search-input" placeholder="Search students..." onkeyup="searchStudents()">
+                        <select id="programFilter" class="filter-select" onchange="filterStudents()">
+                            <option value="">All Programs</option>
+                            <option value="Computer Science">Computer Science</option>
+                            <option value="Information Technology">Information Technology</option>
+                            <option value="Software Engineering">Software Engineering</option>
+                            <option value="Data Science">Data Science</option>
+                        </select>
+                        <select id="levelFilter" class="filter-select" onchange="filterStudents()">
+                            <option value="">All Levels</option>
+                            <option value="100">100</option>
+                            <option value="200">200</option>
+                            <option value="300">300</option>
+                            <option value="400">400</option>
                         </select>
                     </div>
-                    <table class="users-table" id="usersTable">
+                    <table class="users-table" id="studentsTable">
                         <thead>
                             <tr>
-                                <th>Staff ID</th>
+                                <th>Student ID</th>
                                 <th>Name</th>
                                 <th>Email</th>
                                 <th>Phone</th>
-                                <th>Role</th>
+                                <th>Program</th>
+                                <th>Level</th>
+                                <th>Semester</th>
                                 <th>Actions</th>
                             </tr>
                         </thead>
-                        <tbody id="usersTableBody">
-                            <?php foreach ($users as $u): ?>
+                        <tbody id="studentsTableBody">
+                            <?php foreach ($students as $student): ?>
                                 <tr>
-                                    <td><?= htmlspecialchars($u['accounts_id'] ?: '') ?></td>
-                                    <td><?= htmlspecialchars($u['sur_name'] . ' ' . $u['other_name']) ?></td>
-                                    <td><?= htmlspecialchars($u['email']) ?></td>
-                                    <td><?= htmlspecialchars($u['phone']) ?></td>
-                                    <td>
-                                        <span class="user-role role-<?= htmlspecialchars(strtolower($u['role'])) ?>">
-                                            <?= htmlspecialchars(ucfirst($u['role'])) ?>
-                                        </span>
-                                    </td>
+                                    <td><?= htmlspecialchars($student['accounts_id']) ?></td>
+                                    <td><?= htmlspecialchars($student['sur_name'] . ' ' . $student['other_name']) ?></td>
+                                    <td><?= htmlspecialchars($student['email']) ?></td>
+                                    <td><?= htmlspecialchars($student['phone']) ?></td>
+                                    <td><?= htmlspecialchars($student['program']) ?></td>
+                                    <td><?= htmlspecialchars($student['level']) ?></td>
+                                    <td><?= htmlspecialchars($student['semester']) ?></td>
                                     <td class="action-buttons">
                                         <form method="GET" style="display:inline;">
-                                            <input type="hidden" name="edit_user_id" value="<?= htmlspecialchars($u['accounts_id'] ?: '') ?>">
+                                            <input type="hidden" name="edit_student_id" value="<?= htmlspecialchars($student['accounts_id']) ?>">
                                             <button type="submit" class="btn btn-small btn-edit">Edit</button>
                                         </form>
-                                        <form method="POST" style="display:inline;" onsubmit="return confirm('Are you sure you want to delete this user?');">
+                                        <form method="POST" style="display:inline;" onsubmit="return confirm('Are you sure you want to delete this student?');">
                                             <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
-                                            <input type="hidden" name="delete_user_id" value="<?= htmlspecialchars($u['accounts_id'] ?: '') ?>">
+                                            <input type="hidden" name="delete_student_id" value="<?= htmlspecialchars($student['accounts_id']) ?>">
                                             <button type="submit" class="btn btn-small btn-delete">Delete</button>
                                         </form>
                                     </td>
@@ -503,9 +560,9 @@ $initials = getUserInitials($full_name);
     </div>
 
     <script>
-        function searchUsers() {
+        function searchStudents() {
             const searchTerm = document.getElementById('searchInput').value.toLowerCase();
-            const rows = document.querySelectorAll('#usersTableBody tr');
+            const rows = document.querySelectorAll('#studentsTableBody tr');
             
             rows.forEach(row => {
                 const text = row.textContent.toLowerCase();
@@ -513,21 +570,19 @@ $initials = getUserInitials($full_name);
             });
         }
 
-        function filterUsers() {
-            const roleFilter = document.getElementById('roleFilter').value.toLowerCase();
-            const rows = document.querySelectorAll('#usersTableBody tr');
+        function filterStudents() {
+            const programFilter = document.getElementById('programFilter').value;
+            const levelFilter = document.getElementById('levelFilter').value;
+            const rows = document.querySelectorAll('#studentsTableBody tr');
             
             rows.forEach(row => {
-                const roleCell = row.querySelector('.user-role');
-                if (!roleCell) return;
+                const programCell = row.cells[4].textContent.trim();
+                const levelCell = row.cells[5].textContent.trim();
                 
-                const roleText = roleCell.textContent.trim().toLowerCase();
+                const programMatch = !programFilter || programCell === programFilter;
+                const levelMatch = !levelFilter || levelCell === levelFilter;
                 
-                if (!roleFilter || roleText === roleFilter) {
-                    row.style.display = '';
-                } else {
-                    row.style.display = 'none';
-                }
+                row.style.display = programMatch && levelMatch ? '' : 'none';
             });
         }
 

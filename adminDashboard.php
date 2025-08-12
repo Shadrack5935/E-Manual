@@ -1,85 +1,97 @@
 <?php
 session_start();
-
 require_once 'connection.php';
 
-// if (!isset($_SESSION['logged_in']) || $_SESSION['logged_in'] !== true || $_SESSION['role'] !== 'admin') {
-//     header("Location: account.php");
-//     exit();
-// }
+// Security validation
+if (!isset($_SESSION['user_id']) || $_SESSION['user_role'] !== 'admin') {
+    header("Location: account.php");
+    exit();
+}
 
-$user_id = $_SESSION['user_id'] ?? null;
+// CSRF protection
+if (empty($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+
+// Get admin data
+$user_id = $_SESSION['user_id'];
 $user = null;
-if ($user_id) {
-         $stmt = $pdo->prepare("SELECT * FROM accounts WHERE id = ?");
-        $stmt->execute([$user_id]);
-        $user = $stmt->fetch(PDO::FETCH_ASSOC);
-    // try {
-    //     $stmt = $pdo->prepare("SELECT * FROM accounts WHERE id = ?");
-    //     $stmt->execute([$user_id]);
-    //     $user = $stmt->fetch(PDO::FETCH_ASSOC);
 
-    //     if (!$user || !isset($_SESSION['logged_in']) || $_SESSION['logged_in'] !== true || $_SESSION['role'] !== 'admin') {
-    //         session_destroy();
-    //         header("Location: account.php");
-    //         exit();
-    //     }
-    // } catch(PDOException $e) {
-    //     error_log("Database error in dashboard: " . $e->getMessage());
-    //     die("Something went wrong. Please try again later.");
-    // }
-}
+try {
+    $stmt = $pdo->prepare("SELECT accounts_id, sur_name, other_name, email, phone, fullname FROM accounts WHERE accounts_id = ? AND role = 'admin'");
+    $stmt->execute([$user_id]);
+    $user = $stmt->fetch(PDO::FETCH_ASSOC);
 
-// Dashboard stats
-$totalStudents = $pdo->query("SELECT COUNT(*) FROM accounts where role = 'student'")->fetchColumn();
-$totalInstructors = $pdo->query("SELECT COUNT(*) FROM accounts where role = 'instructor'")->fetchColumn();
-$totalCourses = $pdo->query("SELECT COUNT(*) FROM courses")->fetchColumn();
-
-function getUserInitials($fullName) {
-    if (empty($fullName)) return 'U';
-    $words = explode(' ', trim($fullName));
-    if (count($words) >= 2) {
-        return strtoupper(substr($words[0], 0, 1) . substr($words[1], 0, 1));
+    if (!$user) {
+        session_destroy();
+        header("Location: account.php");
+        exit();
     }
-    return strtoupper(substr($fullName, 0, 2));
+} catch(PDOException $e) {
+    error_log("Database error in dashboard: " . $e->getMessage());
+    die("Something went wrong. Please try again later.");
 }
 
-// Get user data properly from the fetched $user array
-$full_name = ($user['first_name'] ?? '') . ' ' . ($user['last_name'] ?? '');
+// Dashboard stats with error handling
+function getCount($pdo, $query) {
+    try {
+        return $pdo->query($query)->fetchColumn();
+    } catch(PDOException $e) {
+        error_log("Count query failed: " . $e->getMessage());
+        return 0;
+    }
+}
+
+$totalStudents = getCount($pdo, "SELECT COUNT(*) FROM accounts WHERE role = 'student'");
+$totalInstructors = getCount($pdo, "SELECT COUNT(*) FROM accounts WHERE role = 'instructor'");
+$totalCourses = getCount($pdo, "SELECT COUNT(*) FROM courses");
+
+// User display data
+$full_name = ($user['sur_name'] ?? '') . ' ' . ($user['other_name'] ?? '');
 if (trim($full_name) === '') {
     $full_name = $user['fullname'] ?? 'Admin';
 }
+
+function getUserInitials($name) {
+    $initials = '';
+    $words = preg_split('/\s+/', trim($name));
+    foreach ($words as $word) {
+        if (mb_strlen($word) > 0) {
+            $initials .= mb_substr($word, 0, 1);
+        }
+        if (mb_strlen($initials) >= 2) break;
+    }
+    return mb_strtoupper($initials ?: 'AD');
+}
+
 $initials = getUserInitials($full_name);
-$username = $user['username'] ?? '';
-$staff_id = $user['staff_id'] ?? '00000';
-$first_name = $user['first_name'] ?? '';
-$last_name = $user['last_name'] ?? '';
-$email = $user['email'] ?? '';
-$phone = $user['phone'] ?? '';
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CodeLab - Dashboard</title>
+    <title>CodeLab - Admin Dashboard</title>
     <link rel="stylesheet" href="dasboard.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
 </head>
 <body>
-   <div class="header">
+    <div class="header">
         <div class="header-content">
-            <div style="display: flex; align-items: center; gap: 1rem;">
+            <div class="header-left">
                 <div class="hamburger" onclick="toggleSidebar()">
                     <span></span>
                     <span></span>
                     <span></span>
                 </div>
-                <div class="logo">CodeLab</div>
+                <div class="logo">CodeLab Admin</div>
             </div>
             <div class="user-menu">
-                <span>Welcome back, <?= htmlspecialchars($full_name) ?></span>
+                <span>Welcome, <?= htmlspecialchars($full_name, ENT_QUOTES) ?></span>
                 <div class="user-avatar"><?= htmlspecialchars($initials) ?></div>
-                <button onclick="logout()" style="background: black; border: 1px solid white; color: white; padding: 0.5rem 1rem; border-radius: 4px; cursor: pointer;">Logout</button>
+                <button class="logout-btn" onclick="logout()">
+                    <i class="fas fa-sign-out-alt"></i> Logout
+                </button>
             </div>
         </div>
     </div>
@@ -90,34 +102,52 @@ $phone = $user['phone'] ?? '';
         <nav class="sidebar" id="sidebar">
             <ul class="sidebar-menu">
                 <li class="sidebar-item">
-                    <a href="#" class="sidebar-link active" onclick="showPage('profile')">
-                        <span class="sidebar-icon">👤</span>
-                        My Profile
+                    <a href="#profile" class="sidebar-link active" onclick="showPage('profile', event)">
+                        <i class="fas fa-user sidebar-icon"></i>
+                        <span>My Profile</span>
                     </a>
                 </li>
                 <li class="sidebar-item">
-                    <a href="#" class="sidebar-link" onclick="showPage('dashboard')">
-                        <span class="sidebar-icon">📊</span>
-                        Dashboard
+                    <a href="#dashboard" class="sidebar-link" onclick="showPage('dashboard', event)">
+                        <i class="fas fa-chart-bar sidebar-icon"></i>
+                        <span>Dashboard</span>
                     </a>
                 </li>
                 <li class="sidebar-item">
-                    <a href="addusers.php" class="sidebar-link" onclick="showPage('add-users')">
-                        <span class="sidebar-icon">➕</span>
-                        Add Users
+                    <a href="addusers.php" class="sidebar-link">
+                        <i class="fas fa-user-plus sidebar-icon"></i>
+                        <span>Add Instructors</span>
                     </a>
                 </li>
                 <li class="sidebar-item">
-                    <a href="addCourse.php" class="sidebar-link" onclick="showPage('add-course')">
-                        <span class="sidebar-icon">📚</span>
-                        Add Courses
+                    <a href="addStudents.php" class="sidebar-link">
+                        <i class="fas fa-user-graduate sidebar-icon"></i>
+                        <span>Add Students</span>
+                    </a>
+                </li>
+                <li class="sidebar-item">
+                    <a href="addPrograms.php" class="sidebar-link">
+                        <i class="fas fa-graduation-cap sidebar-icon"></i>
+                        <span>Add Programs</span>
+                    </a>
+                </li>
+                <li class="sidebar-item">
+                    <a href="addCourse.php" class="sidebar-link">
+                        <i class="fas fa-book sidebar-icon"></i>
+                        <span>Add Courses</span>
+                    </a>
+                </li>
+                <li class="sidebar-item">
+                    <a href="Academic_Calender.php" class="sidebar-link">
+                        <i class="fas fa-calendar-alt sidebar-icon"></i>
+                        <span>Academic Calendar</span>
                     </a>
                 </li>
             </ul>
         </nav>
 
         <main class="content-area">
-            <!-- Profile Page (Default) -->
+            <!-- Profile Page -->
             <div id="profile" class="page-section active">
                 <div class="section-card">
                     <div class="profile-section">
@@ -125,32 +155,27 @@ $phone = $user['phone'] ?? '';
                             <div class="profile-avatar-large"><?= htmlspecialchars($initials) ?></div>
                             <div class="profile-info">
                                 <h1><?= htmlspecialchars($full_name) ?></h1>
+                                <p>Administrator</p>
                             </div>
-                            <button class="edit-profile-btn" onclick="editProfile()">Edit Profile</button>
+                            <button class="edit-profile-btn" onclick="editProfile()">
+                                <i class="fas fa-edit"></i> Edit Profile
+                            </button>
                         </div>
 
                         <div class="profile-details">
                             <div class="detail-group">
-                                <h3>Personal Information</h3>
+                                <h3><i class="fas fa-id-card"></i> Account Information</h3>
                                 <div class="detail-item">
-                                    <span class="detail-label">Staff Id</span>
-                                    <span class="detail-value"><?= htmlspecialchars($staff_id) ?></span>
+                                    <span class="detail-label">Admin ID:</span>
+                                    <span class="detail-value"><?= htmlspecialchars($user['accounts_id']) ?></span>
                                 </div>
                                 <div class="detail-item">
-                                    <span class="detail-label">First Name</span>
-                                    <span class="detail-value"><?= htmlspecialchars($first_name) ?></span>
+                                    <span class="detail-label">Email:</span>
+                                    <span class="detail-value"><?= htmlspecialchars($user['email']) ?></span>
                                 </div>
                                 <div class="detail-item">
-                                    <span class="detail-label">Last Name</span>
-                                    <span class="detail-value"><?= htmlspecialchars($last_name) ?></span>
-                                </div>
-                                <div class="detail-item">
-                                    <span class="detail-label">Email</span>
-                                    <span class="detail-value"><?= htmlspecialchars($email) ?></span>
-                                </div>
-                                <div class="detail-item">
-                                    <span class="detail-label">Phone</span>
-                                    <span class="detail-value"><?= htmlspecialchars($phone) ?></span>
+                                    <span class="detail-label">Phone:</span>
+                                    <span class="detail-value"><?= htmlspecialchars($user['phone']) ?></span>
                                 </div>
                             </div>
                         </div>
@@ -161,124 +186,194 @@ $phone = $user['phone'] ?? '';
             <!-- Dashboard Page -->
             <div id="dashboard" class="page-section">
                 <div class="section-card">
-                    <h2 class="section-title">📊 Admin Dashboard</h2>
+                    <h2 class="section-title"><i class="fas fa-chart-bar"></i> Admin Dashboard</h2>
                     <div class="stats-grid">
                         <div class="stat-card">
-                            <div class="stat-number"><?= $totalStudents ?></div>
+                            <div class="stat-icon"><i class="fas fa-users"></i></div>
+                            <div class="stat-number"><?= htmlspecialchars($totalStudents) ?></div>
                             <div class="stat-label">Total Students</div>
                         </div>
                         <div class="stat-card">
-                            <div class="stat-number"><?= $totalInstructors ?></div>
+                            <div class="stat-icon"><i class="fas fa-chalkboard-teacher"></i></div>
+                            <div class="stat-number"><?= htmlspecialchars($totalInstructors) ?></div>
                             <div class="stat-label">Total Instructors</div>
                         </div>
                         <div class="stat-card">
-                            <div class="stat-number"><?= $totalCourses ?></div>
+                            <div class="stat-icon"><i class="fas fa-book-open"></i></div>
+                            <div class="stat-number"><?= htmlspecialchars($totalCourses) ?></div>
                             <div class="stat-label">Total Courses</div>
                         </div>
                     </div>
                 </div>
             </div>
-        </main>       
+        </main>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div id="loading-overlay" class="loading-overlay">
+        <div class="loading-spinner">
+            <div class="spinner"></div>
+            <p>Loading...</p>
+        </div>
     </div>
 
     <script>
-        // Navigation functions
-        function showPage(pageId) {
-            document.querySelectorAll('.page-section').forEach(page => {
-                page.classList.remove('active');
-            });
-            document.getElementById(pageId).classList.add('active');
-            document.querySelectorAll('.sidebar-link').forEach(link => {
-                link.classList.remove('active');
-            });
-            event.target.closest('.sidebar-link').classList.add('active');
-            if (window.innerWidth <= 768) {
-                closeSidebar();
-            }
+    // Global variables
+    const csrfToken = '<?= $_SESSION['csrf_token'] ?>';
+    let currentPage = 'profile';
+
+    // DOM Elements
+    const sidebar = document.getElementById('sidebar');
+    const overlay = document.querySelector('.overlay');
+    const hamburger = document.querySelector('.hamburger');
+    const pageSections = document.querySelectorAll('.page-section');
+    const sidebarLinks = document.querySelectorAll('.sidebar-link');
+    const loadingOverlay = document.getElementById('loading-overlay');
+
+    // Initialize the dashboard
+    document.addEventListener('DOMContentLoaded', function() {
+        // Set active page based on URL hash
+        const hash = window.location.hash.substring(1);
+        if (hash && document.getElementById(hash)) {
+            showPage(hash);
         }
 
-        function toggleSidebar() {
-            const sidebar = document.getElementById('sidebar');
-            const overlay = document.querySelector('.overlay');
-            sidebar.classList.toggle('open');
-            overlay.classList.toggle('active');
+        // Welcome notification
+        setTimeout(() => {
+            showNotification('Welcome back, <?= htmlspecialchars($full_name) ?>!', 'success');
+        }, 500);
+    });
+
+    // Navigation functions
+    function showPage(pageId, event = null) {
+        if (event) {
+            event.preventDefault();
+            event.stopPropagation();
         }
 
-        function closeSidebar() {
-            const sidebar = document.getElementById('sidebar');
-            const overlay = document.querySelector('.overlay');
-            sidebar.classList.remove('open');
-            overlay.classList.remove('active');
+        // Validate page exists
+        if (!document.getElementById(pageId)) {
+            console.error('Page not found:', pageId);
+            return;
         }
 
-        function editProfile() {
-            showNotification('Opening profile editor...', 'info');
-        }
+        // Update current page
+        currentPage = pageId;
+        window.location.hash = pageId;
 
-        function logout() {
-            if (confirm('Are you sure you want to logout?')) {
-                showNotification('Logging out...', 'info');
-                setTimeout(() => {
-                    window.location.href = 'logout.php';
-                }, 1000);
-            }
-        }
+        // Hide all pages
+        pageSections.forEach(page => {
+            page.classList.remove('active');
+        });
 
-        // Notification system
-        function showNotification(message, type = 'info') {
-            const existingNotification = document.querySelector('.notification');
-            if (existingNotification) {
-                existingNotification.remove();
-            }
-            const notification = document.createElement('div');
-            notification.className = `notification notification-${type}`;
-            notification.innerHTML = `
-                <div style="
-                    position: fixed;
-                    top: 100px;
-                    right: 20px;
-                    background: ${type === 'success' ? '#4CAF50' : type === 'error' ? '#f44336' : '#2196F3'};
-                    color: white;
-                    padding: 1rem 1.5rem;
-                    border-radius: 8px;
-                    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-                    z-index: 1000;
-                    animation: slideIn 0.3s ease;
-                ">
-                    ${message}
-                </div>
-                <style>
-                    @keyframes slideIn {
-                        from { transform: translateX(100%); opacity: 0; }
-                        to { transform: translateX(0); opacity: 1; }
-                    }
-                </style>
-            `;
-            document.body.appendChild(notification);
-            setTimeout(() => {
-                if (notification.parentNode) {
-                    notification.style.animation = 'slideIn 0.3s ease reverse';
-                    setTimeout(() => notification.remove(), 300);
-                }
-            }, 3000);
-        }
+        // Show selected page
+        document.getElementById(pageId).classList.add('active');
 
-        document.addEventListener('click', function(e) {
-            const sidebar = document.getElementById('sidebar');
-            const hamburger = document.querySelector('.hamburger');
-            if (window.innerWidth <= 768 && 
-                !sidebar.contains(e.target) && 
-                !hamburger.contains(e.target) &&
-                sidebar.classList.contains('open')) {
-                closeSidebar();
+        // Update active link
+        sidebarLinks.forEach(link => {
+            link.classList.remove('active');
+            if (link.getAttribute('href') === `#${pageId}`) {
+                link.classList.add('active');
             }
         });
 
-        document.addEventListener('DOMContentLoaded', function() {
-            setTimeout(() => {
-                showNotification('<?= htmlspecialchars($full_name) ?>, Welcome to your profile! 👋', 'success');
-            }, 500);
-        });
+        // Close sidebar on mobile
+        if (window.innerWidth <= 768) {
+            closeSidebar();
+        }
+    }
+
+    // Sidebar functions
+    function toggleSidebar() {
+        sidebar.classList.toggle('open');
+        overlay.classList.toggle('active');
+        document.body.classList.toggle('no-scroll');
+    }
+
+    function closeSidebar() {
+        sidebar.classList.remove('open');
+        overlay.classList.remove('active');
+        document.body.classList.remove('no-scroll');
+    }
+
+    // Profile functions
+    function editProfile() {
+        showLoading(true);
+        // Simulate loading
+        setTimeout(() => {
+            showNotification('Profile editor will be available in the next update', 'info');
+            showLoading(false);
+        }, 1000);
+    }
+
+    // Logout function
+    async function logout() {
+        if (!confirm('Are you sure you want to logout?')) return;
+        
+        showLoading(true);
+        try {
+            const response = await fetch('logout.php', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRF-Token': csrfToken
+                },
+                body: JSON.stringify({ csrf_token: csrfToken })
+            });
+
+            if (response.ok) {
+                window.location.href = 'account.php';
+            } else {
+                throw new Error('Logout failed');
+            }
+        } catch (error) {
+            console.error('Logout error:', error);
+            showNotification(error.message, 'error');
+        } finally {
+            showLoading(false);
+        }
+    }
+
+    // UI Utility functions
+    function showLoading(show) {
+        loadingOverlay.style.display = show ? 'flex' : 'none';
+    }
+
+    function showNotification(message, type = 'info') {
+        const notification = document.createElement('div');
+        notification.className = `notification notification-${type}`;
+        notification.innerHTML = `
+            <div class="notification-content">
+                <i class="fas ${type === 'success' ? 'fa-check-circle' : 
+                                 type === 'error' ? 'fa-exclamation-circle' : 
+                                 'fa-info-circle'}"></i>
+                <span>${message}</span>
+            </div>
+        `;
+        
+        document.body.appendChild(notification);
+        
+        setTimeout(() => {
+            notification.classList.add('fade-out');
+            setTimeout(() => notification.remove(), 300);
+        }, 3000);
+    }
+
+    // Event listeners
+    hamburger.addEventListener('click', toggleSidebar);
+    overlay.addEventListener('click', closeSidebar);
+    window.addEventListener('resize', function() {
+        if (window.innerWidth > 768) {
+            closeSidebar();
+        }
+    });
+
+    // Make functions available globally
+    window.showPage = showPage;
+    window.toggleSidebar = toggleSidebar;
+    window.closeSidebar = closeSidebar;
+    window.logout = logout;
+    window.editProfile = editProfile;
     </script>
 </body>
 </html>

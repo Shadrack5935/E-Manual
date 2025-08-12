@@ -378,6 +378,7 @@ $phone = $user['phone'] ?? '';
             display: flex;
             margin-top: 70px;
             min-height: calc(100vh - 70px);
+            
         }
               .sidebar {
             width: 280px;
@@ -506,12 +507,12 @@ $phone = $user['phone'] ?? '';
                     <span></span>
                     <span></span>
                 </div>
-                <div class="logo">CodeLab</div>
+                <div class="logo">E-MANUAL</div>
             </div>
             <div class="user-menu">
-                <span>Welcome back,<?= htmlspecialchars($full_name) ?></span>
+                <span>Welcome back,<?= htmlspecialchars($first_name) ?></span>
                 <div class="user-avatar"><?= htmlspecialchars($initials) ?></div>
-                <button onclick="logout()" style="background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.3); color: white; padding: 0.5rem 1rem; border-radius: 4px; cursor: pointer;">Logout</button>
+                <button onclick="logout()" class="logout-btn">Logout</button>
             </div>
         </div>
     </div>

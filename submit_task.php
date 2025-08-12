@@ -6,87 +6,110 @@ header('Content-Type: application/json');
 
 $student_id = $_SESSION['user_id'] ?? null;
 
-if (!$student_id) {
-    echo json_encode(['success' => false, 'message' => 'Not authenticated']);
+if (!$student_id || $_SERVER['REQUEST_METHOD'] !== 'POST') {
+    echo json_encode(['success' => false, 'error' => 'Not authenticated or invalid method']);
     exit;
 }
 
-if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-    echo json_encode(['success' => false, 'message' => 'Invalid request method']);
-    exit;
-}
-
+// Get form data
 $task_id = $_POST['task_id'] ?? null;
+$course_code = $_POST['course_code'] ?? null;
 $submission_text = $_POST['submission_text'] ?? '';
+$files = $_FILES['submission_files'] ?? null;
 
-if (!$task_id) {
-    echo json_encode(['success' => false, 'message' => 'Task ID is required']);
+if (!$task_id || !$course_code) {
+    echo json_encode(['success' => false, 'error' => 'Missing required fields']);
     exit;
 }
 
 try {
-    // Check if task exists and student is enrolled in the course
+    // Check if task exists and is assigned to student's course
     $stmt = $pdo->prepare("
-        SELECT t.id, t.due_date, c.id as course_id
-        FROM tasks t
-        JOIN courses c ON t.course_code = c.course_code
-        JOIN course_enrollments ce ON c.id = ce.course_id
-        WHERE t.id = ? AND ce.student_id = ?
+        SELECT 1 FROM tasks t
+        JOIN course_enrollments ce ON t.course_code = ce.course_code
+        WHERE t.id = ? AND ce.accounts_id = ?
     ");
     $stmt->execute([$task_id, $student_id]);
-    $task = $stmt->fetch(PDO::FETCH_ASSOC);
     
-    if (!$task) {
-        echo json_encode(['success' => false, 'message' => 'Task not found or you are not enrolled in this course']);
+    if (!$stmt->fetch()) {
+        echo json_encode(['success' => false, 'error' => 'Task not found or not assigned to you']);
         exit;
     }
-    
-    // Check if already submitted
-    $stmt = $pdo->prepare("SELECT id FROM task_submissions WHERE task_id = ? AND student_id = ?");
-    $stmt->execute([$task_id, $student_id]);
-    
-    if ($stmt->fetch()) {
-        echo json_encode(['success' => false, 'message' => 'Task already submitted']);
-        exit;
-    }
-    
+
     // Handle file uploads
-    $uploaded_files = [];
-    if (isset($_FILES['submission_files'])) {
-        $upload_dir = '../uploads/submissions/';
-        if (!is_dir($upload_dir)) {
-            mkdir($upload_dir, 0755, true);
+    $file_paths = [];
+    if (!empty($files['name'][0])) {
+        $uploadDir = 'uploads/submissions/';
+        if (!file_exists($uploadDir)) {
+            mkdir($uploadDir, 0777, true);
         }
         
-        foreach ($_FILES['submission_files']['tmp_name'] as $key => $tmp_name) {
-            if ($_FILES['submission_files']['error'][$key] === UPLOAD_ERR_OK) {
-                $file_name = $_FILES['submission_files']['name'][$key];
-                $file_extension = pathinfo($file_name, PATHINFO_EXTENSION);
-                $new_file_name = $student_id . '_' . $task_id . '_' . time() . '_' . $key . '.' . $file_extension;
-                $upload_path = $upload_dir . $new_file_name;
-                
-                if (move_uploaded_file($tmp_name, $upload_path)) {
-                    $uploaded_files[] = $new_file_name;
-                }
+        for ($i = 0; $i < count($files['name']); $i++) {
+            $fileName = uniqid() . '_' . basename($files['name'][$i]);
+            $targetPath = $uploadDir . $fileName;
+            
+            if (move_uploaded_file($files['tmp_name'][$i], $targetPath)) {
+                $file_paths[] = $targetPath;
             }
         }
     }
     
-    // Insert submission
+    $file_paths_str = implode(',', $file_paths);
+    $current_time = date('Y-m-d H:i:s');
+    
+    // Check if submission already exists
     $stmt = $pdo->prepare("
-        INSERT INTO task_submissions (task_id, student_id, submission_text, submission_files, submission_date) 
-        VALUES (?, ?, ?, ?, NOW())
+        SELECT id FROM submissions 
+        WHERE task_id = ? AND student_id = ?
     ");
-    $stmt->execute([
-        $task_id, 
-        $student_id, 
-        $submission_text, 
-        json_encode($uploaded_files)
+    $stmt->execute([$task_id, $student_id]);
+    
+    if ($existing = $stmt->fetch()) {
+        // Update existing submission
+        $stmt = $pdo->prepare("
+            UPDATE submissions SET
+                submission_text = ?,
+                file_path = ?,
+                submitted_at = ?,
+                status = 'pending'
+            WHERE id = ?
+        ");
+        $stmt->execute([
+            $submission_text,
+            $file_paths_str,
+            $current_time,
+            $existing['id']
+        ]);
+    } else {
+        // Create new submission
+        $stmt = $pdo->prepare("
+            INSERT INTO submissions (
+                task_id, 
+                student_id, 
+                submission_text, 
+                file_path, 
+                submitted_at, 
+                status
+            ) VALUES (?, ?, ?, ?, ?, 'pending')
+        ");
+        $stmt->execute([
+            $task_id,
+            $student_id,
+            $submission_text,
+            $file_paths_str,
+            $current_time
+        ]);
+    }
+    
+    echo json_encode([
+        'success' => true, 
+        'message' => 'Task submitted successfully'
     ]);
     
-    echo json_encode(['success' => true, 'message' => 'Task submitted successfully']);
-    
 } catch(PDOException $e) {
-    echo json_encode(['success' => false, 'message' => 'Database error: ' . $e->getMessage()]);
+    echo json_encode([
+        'success' => false, 
+        'error' => 'Database error: ' . $e->getMessage()
+    ]);
 }
 ?>

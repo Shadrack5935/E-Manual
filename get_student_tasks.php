@@ -12,60 +12,73 @@ if (!$student_id) {
 }
 
 try {
-    // Get tasks assigned to the student
+    // Get all tasks for the student's enrolled courses
     $stmt = $pdo->prepare("
         SELECT 
             t.id,
             t.task_title as title,
-            t.task_description as description,
-            t.task_type as type,
-            t.due_date,
-            t.max_marks,
             t.course_code,
             c.course_name,
-            s.submission_date,
-            s.submission_text,
+            t.topic_code,
+            tp.topic_title,
+            t.task_type,
+            t.description,
+            t.due_date,
+            t.max_marks,
+            t.allow_late_submission,
+            s.status,
             s.grade,
+            s.letter_grade,
             s.feedback,
-            CASE 
-                WHEN s.grade IS NOT NULL THEN 'graded'
-                WHEN s.submission_date IS NOT NULL THEN 'submitted'
-                ELSE 'pending'
-            END as status
+            s.submitted_at,
+            s.graded_at,
+            a.fullname as instructor
         FROM tasks t
+        JOIN course_enrollments ce ON t.course_code = ce.course_code
         JOIN courses c ON t.course_code = c.course_code
-        JOIN course_enrollments ce ON c.id = ce.course_id
-        LEFT JOIN task_submissions s ON t.id = s.task_id AND s.student_id = ?
-        WHERE ce.student_id = ?
+        LEFT JOIN topics tp ON t.topic_code = tp.topic_code
+        LEFT JOIN submissions s ON t.id = s.task_id AND s.student_id = ?
+        LEFT JOIN accounts a ON c.instructor_id = a.accounts_id
+        WHERE ce.accounts_id = ?
         ORDER BY t.due_date ASC
     ");
     
     $stmt->execute([$student_id, $student_id]);
     $tasks = $stmt->fetchAll(PDO::FETCH_ASSOC);
     
-    // Format the data
+    // Format dates and set default status if not submitted
     $formatted_tasks = array_map(function($task) {
         return [
             'id' => $task['id'],
             'title' => $task['title'],
-            'description' => $task['description'],
-            'type' => ucfirst($task['type']),
-            'dueDate' => date('M j, Y g:i A', strtotime($task['due_date'])),
-            'maxMarks' => $task['max_marks'],
             'courseCode' => $task['course_code'],
             'courseName' => $task['course_name'],
-            'status' => $task['status'],
-            'submissionDate' => $task['submission_date'] ? date('M j, Y g:i A', strtotime($task['submission_date'])) : null,
-            'submissionText' => $task['submission_text'],
+            'topicCode' => $task['topic_code'],
+            'topicTitle' => $task['topic_title'],
+            'type' => $task['task_type'],
+            'description' => $task['description'],
+            'dueDate' => $task['due_date'],
+            'maxMarks' => $task['max_marks'],
+            'allowLateSubmission' => $task['allow_late_submission'] === 'yes',
+            'status' => $task['status'] ?? 'pending',
             'grade' => $task['grade'],
+            'letterGrade' => $task['letter_grade'],
             'feedback' => $task['feedback'],
-            'isOverdue' => strtotime($task['due_date']) < time() && $task['status'] === 'pending'
+            'submittedAt' => $task['submitted_at'],
+            'gradedAt' => $task['graded_at'],
+            'instructor' => $task['instructor']
         ];
     }, $tasks);
     
-    echo json_encode($formatted_tasks);
+    echo json_encode([
+        'success' => true, 
+        'tasks' => $formatted_tasks
+    ]);
     
 } catch(PDOException $e) {
-    echo json_encode(['success' => false, 'error' => 'Database error: ' . $e->getMessage()]);
+    echo json_encode([
+        'success' => false, 
+        'error' => 'Database error: ' . $e->getMessage()
+    ]);
 }
 ?>

@@ -1,41 +1,8 @@
 <?php
-session_start(); 
- require_once 'connection.php';
+/session_start(); 
+require_once 'connection.php';
 
- $user_id = $_SESSION['user_id'];
-$user_id = $_SESSION['user_id'] ?? null;
-$user = null;
-if ($user_id) {
-     $stmt = $pdo->prepare("SELECT * FROM accounts WHERE id = ?");
-        $stmt->execute([$user_id]);
-        $user = $stmt->fetch(PDO::FETCH_ASSOC);
-    // try {
-    //     $stmt = $pdo->prepare("SELECT * FROM accounts WHERE id = ?");
-    //     $stmt->execute([$user_id]);
-    //     $user = $stmt->fetch(PDO::FETCH_ASSOC);
-
-    //     if (!$user || !isset($_SESSION['logged_in']) || $_SESSION['logged_in'] !== true) {
-    //         session_destroy();
-    //         header("Location: account.php");
-    //         exit();
-    //     }
-    // } catch(PDOException $e) {
-    //     error_log("Database error in dashboard: " . $e->getMessage());
-    //     die("Something went wrong. Please try again later.");
-    // }
-}
-function getUserInitials($fullName) {
-    if (empty($fullName)) return 'U';
-    $words = explode(' ', trim($fullName));
-    if (count($words) >= 2) {
-        return strtoupper(substr($words[0], 0, 1) . substr($words[1], 0, 1));
-    }
-    return strtoupper(substr($fullName, 0, 2));
-}
-
-$full_name = ($user['first_name'] ?? 'Instructor') . ' ' . ($user['last_name'] ?? '');
-$initials = getUserInitials($full_name);
- ?>
+?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -157,8 +124,8 @@ $initials = getUserInitials($full_name);
                 <div class="logo">CodeLab</div>
             </div>
             <div class="user-menu">
-                <span>Welcome back,<?= htmlspecialchars($full_name) ?></span>
-                <div class="user-avatar"><?= htmlspecialchars($initials) ?></div>
+                <span>Welcome back,</span>
+                <div class="user-avatar"></div>
                 <button onclick="logout()" style="background: black; border: 1px solid white; color: white; padding: 0.5rem 1rem; border-radius: 4px; cursor: pointer; color: white">Logout</button>
             </div>
         </div>
@@ -221,15 +188,18 @@ $initials = getUserInitials($full_name);
                                         <label for="topicCode">Topic Code *</label>
                                         <input type="text" id="topicCode" name="topicCode" required placeholder="e.g., HTML01, CSS02">
                                     </div>
+                                    <div class="form-group">
+                                        <label for="topicCode">Course Code *</label>
+                                        <input type="text" id="topicCode" name="topicCode" required placeholder="e.g., BCT3001">
+                                    </div>
+                                </div>
+                                
+                                <div class="form-group">
+                                    <label for="topicDescription">Topic Description *</label>
+                                    <textarea id="topicDescription" name="topicDescription" required placeholder="Provide a detailed description of the topic..."></textarea>
                                 </div>
                                 
                                 <div class="form-row">
-                                    <div class="form-group">
-                                        <label for="courseCode">Course Code *</label>
-                                        <select id="courseCode" name="courseCode" required>
-                                            <option value="">Select Course</option>
-                                        </select>
-                                    </div>
                                     <div class="form-group">
                                         <label for="category">Program *</label>
                                         <select id="category" name="category" required>
@@ -240,11 +210,6 @@ $initials = getUserInitials($full_name);
                                             <option value="Data Science">Data Science</option>
                                         </select>
                                     </div>
-                                </div>
-                                
-                                <div class="form-group">
-                                    <label for="topicDescription">Topic Description *</label>
-                                    <textarea id="topicDescription" name="topicDescription" required placeholder="Provide a detailed description of the topic..."></textarea>
                                 </div>
                             </div>
                             <div class="form-actions">
@@ -257,56 +222,6 @@ $initials = getUserInitials($full_name);
         </main>       
     </div>
         <script>
-        // Load courses on page load
-        function loadCourses() {
-            fetch('get_courses.php')
-                .then(response => response.json())
-                .then(data => {
-                    if (data.success) {
-                        const courseSelect = document.getElementById('courseCode');
-                        courseSelect.innerHTML = '<option value="">Select Course</option>';
-                        
-                        data.courses.forEach(course => {
-                            const option = document.createElement('option');
-                            option.value = course.course_code;
-                            option.textContent = `${course.course_code} - ${course.course_name}`;
-                            courseSelect.appendChild(option);
-                        });
-                    } else {
-                        showNotification('Error loading courses: ' + data.error, 'error');
-                    }
-                })
-                .catch(error => {
-                    showNotification('Error loading courses: ' + error.message, 'error');
-                });
-        }
-
-        // Handle form submission
-        document.getElementById('addTopicForm').addEventListener('submit', function(e) {
-            e.preventDefault();
-            
-            const formData = new FormData(this);
-            
-            showNotification('Creating topic...', 'info');
-            
-            fetch('create_topic.php', {
-                method: 'POST',
-                body: formData
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    showNotification('Topic created successfully!', 'success');
-                    this.reset();
-                } else {
-                    showNotification('Error creating topic: ' + data.error, 'error');
-                }
-            })
-            .catch(error => {
-                showNotification('Error creating topic: ' + error.message, 'error');
-            });
-        });
-
         // Navigation functions
         function showPage(pageId) {
             // Hide all pages
@@ -416,10 +331,8 @@ $initials = getUserInitials($full_name);
 
         // Welcome animation
         document.addEventListener('DOMContentLoaded', function() {
-            loadCourses();
-            
             setTimeout(() => {
-                showNotification('Ready to create new topics! ➕', 'success');
+                showNotification('Admin,Welcome to your profile! 👋', 'success');
             }, 500);
         });
     </script>

@@ -2,18 +2,28 @@
 session_start();
 require_once 'connection.php';
 
-$student_id = $_SESSION['user_id'] ?? null;
+if (!isset($_SESSION['user_id']) || $_SESSION['user_role'] !== 'student') {
+    header("Location: account.php");
+    exit();
+}
+
+$student_id = $_SESSION['user_id'];
 $student = null;
 $initials = 'ST';
 
-if ($student_id) {
-    $stmt = $pdo->prepare("SELECT student_id, first_name, last_name, email, phone, program, academic_year FROM accounts WHERE id = ? AND role = 'student'");
-    $stmt->execute([$student_id]);
-    $student = $stmt->fetch(PDO::FETCH_ASSOC);
+// Get student data from both accounts and students tables
+$stmt = $pdo->prepare("
+    SELECT a.accounts_id, a.sur_name, a.other_name, a.email, a.phone, 
+           s.program, s.level, s.academic_year,s.semester
+    FROM accounts a
+    JOIN students s ON a.accounts_id = s.accounts_id
+    WHERE a.accounts_id = ? AND a.role = 'student'
+");
+$stmt->execute([$student_id]);
+$student = $stmt->fetch(PDO::FETCH_ASSOC);
 
-    if ($student) {
-        $initials = strtoupper(substr($student['first_name'], 0, 1) . substr($student['last_name'], 0, 1));
-    }
+if ($student) {
+    $initials = strtoupper(substr($student['sur_name'], 0, 1) . substr($student['other_name'], 0, 1));
 }
 ?>
 <!DOCTYPE html>
@@ -23,13 +33,60 @@ if ($student_id) {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>CodeLab - Student Dashboard</title>
     <link rel="stylesheet" href="students.css">
+    <style>
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        #loadingOverlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        .notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 15px;
+            border-radius: 5px;
+            color: white;
+            z-index: 1001;
+            transition: opacity 0.3s ease;
+        }
+        
+        .notification.success {
+            background-color: #4CAF50;
+        }
+        
+        .notification.error {
+            background-color: #f44336;
+        }
+        
+        .notification.info {
+            background-color: #2196F3;
+        }
+    </style>
 </head>
 <body>
+    <!-- Loading Overlay -->
+    <div id="loadingOverlay">
+        <div class="spinner"></div>
+    </div>
+
     <!-- Header -->
     <div class="header">
         <div class="header-content">
-            <div style="display: flex; align-items: center; gap: 1rem;">
-                <div class="hamburger" onclick="toggleSidebar()">
+            <div class="header-left">
+                <div class="hamburger">
                     <span></span>
                     <span></span>
                     <span></span>
@@ -37,15 +94,15 @@ if ($student_id) {
                 <div class="logo">CodeLab Student</div>
             </div>
             <div class="user-menu">
-                <span>Welcome back, <?= htmlspecialchars($student['first_name'] ?? 'Student') ?></span>
+                <span class="welcome-message">Welcome back, <?= htmlspecialchars($student['other_name'] ?? 'Student') ?></span>
                 <div class="user-avatar"><?= htmlspecialchars($initials) ?></div>
-                <button onclick="logout()" class="logout-btn">Logout</button>
+                <button class="logout-btn">Logout</button>
             </div>
         </div>
     </div>
 
     <!-- Sidebar Overlay -->
-    <div class="overlay" onclick="closeSidebar()"></div>
+    <div class="overlay"></div>
 
     <!-- Main Container -->
     <div class="main-container">
@@ -53,37 +110,37 @@ if ($student_id) {
         <nav class="sidebar" id="sidebar">
             <ul class="sidebar-menu">
                 <li class="sidebar-item">
-                    <a href="#" class="sidebar-link active" onclick="showPage(event, 'dashboard')">
+                    <a href="#" class="sidebar-link active" data-page="dashboard">
                         <span class="sidebar-icon">📊</span>
                         Dashboard
                     </a>
                 </li>
                 <li class="sidebar-item">
-                    <a href="#" class="sidebar-link" onclick="showPage(event, 'registration')">
+                    <a href="#" class="sidebar-link" data-page="registration">
                         <span class="sidebar-icon">➕</span>
                         Course Registration
                     </a>
                 </li>
                 <li class="sidebar-item">
-                    <a href="#" class="sidebar-link" onclick="showPage(event, 'courses')">
+                    <a href="#" class="sidebar-link" data-page="courses">
                         <span class="sidebar-icon">📚</span>
                         My Courses
                     </a>
                 </li>
                 <li class="sidebar-item">
-                    <a href="#" class="sidebar-link" onclick="showPage(event, 'tasks')">
+                    <a href="#" class="sidebar-link" data-page="tasks">
                         <span class="sidebar-icon">📝</span>
                         Tasks & Assignments
                     </a>
                 </li>
                 <li class="sidebar-item">
-                    <a href="#" class="sidebar-link" onclick="showPage(event, 'grades')">
+                    <a href="#" class="sidebar-link" data-page="grades">
                         <span class="sidebar-icon">🏆</span>
                         Grades
                     </a>
                 </li>
                 <li class="sidebar-item">
-                    <a href="#" class="sidebar-link" onclick="showPage(event, 'profile')">
+                    <a href="#" class="sidebar-link" data-page="profile">
                         <span class="sidebar-icon">👤</span>
                         Profile
                     </a>
@@ -100,19 +157,19 @@ if ($student_id) {
                     
                     <div class="stats-grid">
                         <div class="stat-card">
-                            <div class="stat-number" id="enrolledCount">3</div>
+                            <div class="stat-number" id="enrolledCount">0</div>
                             <div class="stat-label">Enrolled Courses</div>
                         </div>
                         <div class="stat-card">
-                            <div class="stat-number" id="pendingTasks">5</div>
+                            <div class="stat-number" id="pendingTasks">0</div>
                             <div class="stat-label">Pending Tasks</div>
                         </div>
                         <div class="stat-card">
-                            <div class="stat-number" id="avgGrade">B+</div>
+                            <div class="stat-number" id="avgGrade">N/A</div>
                             <div class="stat-label">Average Grade</div>
                         </div>
                         <div class="stat-card">
-                            <div class="stat-number" id="completedTasks">12</div>
+                            <div class="stat-number" id="completedTasks">0</div>
                             <div class="stat-label">Completed Tasks</div>
                         </div>
                     </div>
@@ -140,29 +197,24 @@ if ($student_id) {
                 <div class="section-card">
                     <h2 class="section-title">➕ Course Registration</h2>
                     
-                    <div class="registration-controls">
-                        <div class="search-filter">
-                            <input type="text" id="courseSearch" class="search-input" placeholder="Search courses..." onkeyup="filterCourses()">
-                            <select id="semesterFilter" class="filter-select" onchange="filterCourses()">
-                                <option value="">All Semesters</option>
-                                <option value="First Semester">First Semester</option>
-                                <option value="Second Semester">Second Semester</option>
-                            </select>
-                            <select id="programFilter" class="filter-select" onchange="filterCourses()">
-                                <option value="">All Programs</option>
-                                <option value="Computer Science">Computer Science</option>
-                                <option value="Information Technology">Information Technology</option>
-                                <option value="Software Engineering">Software Engineering</option>
-                                <option value="Data Science">Data Science</option>
-                            </select>
+                    <div class="registration-info">
+                        <div class="info-item">
+                            <strong>Your Program:</strong> 
+                            <span id="studentProgram"><?= htmlspecialchars($student['program'] ?? 'N/A') ?></span>
                         </div>
-                        
-                        <div class="bulk-actions">
-                            <button class="btn-primary" onclick="registerSelectedCourses()">
-                                Register Selected Courses (<span id="selectedCount">0</span>)
-                            </button>
-                            <button class="btn-secondary" onclick="clearSelection()">Clear Selection</button>
+                        <div class="info-item">
+                            <strong>Current Semester:</strong> 
+                            <span id="studentSemester"><?= htmlspecialchars($student['semester'] ?? 'N/A') ?></span>
                         </div>
+                        <div class="info-item">
+                            <strong>Current Level:</strong> 
+                            <span id="studentSemester"><?= htmlspecialchars($student['level'] ?? 'N/A') ?></span>
+                        </div>
+                    </div>
+                    
+                    <div class="search-filter">
+                        <input type="text" id="courseSearch" class="search-input" 
+                               placeholder="Search courses by name or code...">
                     </div>
 
                     <div class="table-container">
@@ -170,14 +222,14 @@ if ($student_id) {
                             <thead>
                                 <tr>
                                     <th>
-                                        <input type="checkbox" id="selectAll" onchange="toggleSelectAll()">
+                                        <input type="checkbox" id="selectAll">
                                     </th>
                                     <th>Course Code</th>
                                     <th>Course Name</th>
                                     <th>Credits</th>
                                     <th>Instructor</th>
                                     <th>Schedule</th>
-                                    <th>Enrolled/Capacity</th>
+                                    <th>Enrolled</th>
                                     <th>Status</th>
                                     <th>Actions</th>
                                 </tr>
@@ -186,6 +238,13 @@ if ($student_id) {
                                 <!-- Dynamic course rows will be inserted here -->
                             </tbody>
                         </table>
+                    </div>
+                    
+                    <div class="bulk-actions">
+                        <button class="btn-primary" id="registerCoursesBtn">
+                            Register Selected Courses (<span id="selectedCount">0</span>)
+                        </button>
+                        <button class="btn-secondary" id="clearSelectionBtn">Clear Selection</button>
                     </div>
                 </div>
             </div>
@@ -207,10 +266,10 @@ if ($student_id) {
                     <h2 class="section-title">📝 Tasks & Assignments</h2>
                     
                     <div class="task-filters">
-                        <button class="filter-btn active" onclick="filterTasks('all')">All Tasks</button>
-                        <button class="filter-btn" onclick="filterTasks('pending')">Pending</button>
-                        <button class="filter-btn" onclick="filterTasks('submitted')">Submitted</button>
-                        <button class="filter-btn" onclick="filterTasks('graded')">Graded</button>
+                        <button class="filter-btn active" data-filter="all">All Tasks</button>
+                        <button class="filter-btn" data-filter="pending">Pending</button>
+                        <button class="filter-btn" data-filter="submitted">Submitted</button>
+                        <button class="filter-btn" data-filter="graded">Graded</button>
                     </div>
 
                     <div class="tasks-grid" id="tasksGrid">
@@ -227,19 +286,19 @@ if ($student_id) {
                     <div class="grades-overview">
                         <div class="grade-summary">
                             <h3>Overall Performance</h3>
-                            <div class="overall-grade">B+</div>
+                            <div class="overall-grade" id="overallGrade">N/A</div>
                             <div class="grade-breakdown">
                                 <div class="grade-item">
                                     <span>Total Courses:</span>
-                                    <span>3</span>
+                                    <span id="totalCourses">0</span>
                                 </div>
                                 <div class="grade-item">
                                     <span>Completed Tasks:</span>
-                                    <span>12/17</span>
+                                    <span id="completedTasksCount">0/0</span>
                                 </div>
                                 <div class="grade-item">
                                     <span>Average Score:</span>
-                                    <span>82%</span>
+                                    <span id="averageScore">0%</span>
                                 </div>
                             </div>
                         </div>
@@ -260,11 +319,11 @@ if ($student_id) {
                         <div class="profile-header">
                             <div class="profile-avatar-large"><?= htmlspecialchars($initials) ?></div>
                             <div class="profile-info">
-                                <h3><?= htmlspecialchars(($student['first_name'] ?? '') . ' ' . ($student['last_name'] ?? '')) ?></h3>
+                                <h3><?= htmlspecialchars(($student['sur_name'] ?? '') . ' ' . ($student['other_name'] ?? '')) ?></h3>
                                 <p><?= htmlspecialchars($student['program'] ?? '') ?> Student</p>
-                                <p>Student ID: <?= htmlspecialchars($student['student_id'] ?? '') ?></p>
+                                <p>Student ID: <?= htmlspecialchars($student['accounts_id'] ?? '') ?></p>
                             </div>
-                            <button class="edit-profile-btn" onclick="editProfile()">Edit Profile</button>
+                            <button class="edit-profile-btn" id="editProfileBtn">Edit Profile</button>
                         </div>
 
                         <div class="profile-details">
@@ -283,8 +342,16 @@ if ($student_id) {
                                     <span class="detail-value"><?= htmlspecialchars($student['program'] ?? '') ?></span>
                                 </div>
                                 <div class="detail-item">
-                                    <span class="detail-label">Year:</span>
+                                    <span class="detail-label">Level:</span>
+                                    <span class="detail-value"><?= htmlspecialchars($student['level'] ?? '') ?></span>
+                                </div>
+                                <div class="detail-item">
+                                    <span class="detail-label">Academic Year:</span>
                                     <span class="detail-value"><?= htmlspecialchars($student['academic_year'] ?? '') ?></span>
+                                </div>
+                                <div class="detail-item">
+                                    <span class="detail-label">Semester:</span>
+                                    <span class="detail-value"><?= htmlspecialchars($student['semester'] ?? '') ?></span>
                                 </div>
                             </div>
                         </div>
@@ -299,7 +366,7 @@ if ($student_id) {
         <div class="modal-content">
             <div class="modal-header">
                 <h3>Submit Task</h3>
-                <span class="close" onclick="closeTaskModal()">&times;</span>
+                <span class="close">&times;</span>
             </div>
             <div class="modal-body">
                 <form id="taskSubmissionForm" method="POST" enctype="multipart/form-data">
@@ -328,577 +395,531 @@ if ($student_id) {
                         <div class="file-list" id="fileList"></div>
                     </div>
                     <div class="form-actions">
-                        <button type="button" class="btn-secondary" onclick="closeTaskModal()">Cancel</button>
+                        <button type="button" class="btn-secondary" id="cancelTaskBtn">Cancel</button>
                         <button type="submit" class="btn-primary">Submit Task</button>
                     </div>
                 </form>
             </div>
         </div>
     </div>
-
     <script>
-    // Global variables
-    let availableCourses = [];
-    let studentCourses = [];
-    let tasks = [];
-    let grades = [];
-    let selectedCourses = new Set();
-    let enrolledCourses = new Set();
-    let currentTaskFilter = 'all';
+        // Student Dashboard - Complete JavaScript Implementation
+    document.addEventListener('DOMContentLoaded', function() {
+            // Global variables
+            let availableCourses = [];
+            let studentCourses = [];
+            let tasks = [];
+            let grades = [];
+            let selectedCourses = new Set();
+            let enrolledCourses = new Set();
+            let currentTaskFilter = 'all';
+            let currentStudentId = '<?= $student_id ?>';
 
-    // Fetch data from the backend
-    async function fetchAvailableCourses() {
-        try {
-            const res = await fetch('get_available_courses.php');
-            const data = await res.json();
-            if (data.success) {
-                availableCourses = data.courses;
-            } else {
-                showNotification('Error loading courses: ' + data.error, 'error');
-            }
-        } catch (error) {
-            showNotification('Error loading courses: ' + error.message, 'error');
-        }
-        renderCourseRegistration();
-    }
+            // DOM Elements
+            const sidebar = document.getElementById('sidebar');
+            const overlay = document.querySelector('.overlay');
+            const hamburger = document.querySelector('.hamburger');
+            const courseSearch = document.getElementById('courseSearch');
+            const selectAllCheckbox = document.getElementById('selectAll');
+            const selectedCountSpan = document.getElementById('selectedCount');
+            const coursesTableBody = document.getElementById('coursesTableBody');
+            const myCoursesGrid = document.getElementById('myCoursesGrid');
+            const tasksGrid = document.getElementById('tasksGrid');
+            const dashboardCourses = document.getElementById('dashboardCourses');
+            const upcomingDeadlines = document.getElementById('upcomingDeadlines');
+            const enrolledCount = document.getElementById('enrolledCount');
+            const pendingTasks = document.getElementById('pendingTasks');
+            const completedTasks = document.getElementById('completedTasks');
+            const avgGrade = document.getElementById('avgGrade');
+            const taskModal = document.getElementById('taskModal');
+            const taskSubmissionForm = document.getElementById('taskSubmissionForm');
+            const logoutBtn = document.querySelector('.logout-btn');
+            const registerCoursesBtn = document.getElementById('registerCoursesBtn');
+            const clearSelectionBtn = document.getElementById('clearSelectionBtn');
 
-    async function fetchStudentCourses() {
-        try {
-            const res = await fetch('get_student_courses.php');
-            studentCourses = await res.json();
-            enrolledCourses = new Set(studentCourses.map(c => c.id));
-        } catch (error) {
-            showNotification('Error loading student courses: ' + error.message, 'error');
-        }
-        renderMyCourses();
-        renderDashboard();
-    }
+            // Initialize the dashboard
+            initDashboard();
 
-    async function fetchTasks() {
-        try {
-            const res = await fetch('get_student_tasks.php');
-            tasks = await res.json();
-        } catch (error) {
-            showNotification('Error loading tasks: ' + error.message, 'error');
-        }
-        renderTasks();
-        renderDashboard();
-    }
+            // Event Listeners
+            if (hamburger) hamburger.addEventListener('click', toggleSidebar);
+            if (overlay) overlay.addEventListener('click', closeSidebar);
+            if (courseSearch) courseSearch.addEventListener('input', filterCourses);
+            if (selectAllCheckbox) selectAllCheckbox.addEventListener('change', toggleSelectAll);
+            if (logoutBtn) logoutBtn.addEventListener('click', logout);
+            if (registerCoursesBtn) registerCoursesBtn.addEventListener('click', registerSelectedCourses);
+            if (clearSelectionBtn) clearSelectionBtn.addEventListener('click', clearSelection);
+            
+            window.addEventListener('resize', handleResponsiveLayout);
 
-    async function fetchGrades() {
-        try {
-            const res = await fetch('get_student_grades.php');
-            grades = await res.json();
-        } catch (error) {
-            showNotification('Error loading grades: ' + error.message, 'error');
-        }
-        renderGrades();
-    }
+            // Sidebar navigation
+            document.querySelectorAll('.sidebar-link').forEach(link => {
+                link.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    const pageId = this.getAttribute('data-page');
+                    showPage(this, pageId);
+                });
+            });
 
-    // Initialize the dashboard
-    document.addEventListener('DOMContentLoaded', async function() {
-        await fetchAvailableCourses();
-        await fetchStudentCourses();
-        await fetchTasks();
-        await fetchGrades();
+            // Task filter buttons
+            document.querySelectorAll('.filter-btn').forEach(btn => {
+                btn.addEventListener('click', function() {
+                    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+                    this.classList.add('active');
+                    currentTaskFilter = this.dataset.filter;
+                    renderTasks();
+                });
+            });
 
-        // Set up file input handler
-        const fileInput = document.getElementById('submissionFiles');
-        if (fileInput) {
-            fileInput.addEventListener('change', handleFileSelection);
-        }
-
-        // Set up task form handler
-        const taskForm = document.getElementById('taskSubmissionForm');
-        if (taskForm) {
-            taskForm.addEventListener('submit', handleTaskSubmission);
-        }
-
-        // Welcome message
-        setTimeout(() => {
-            showNotification('Welcome to your student dashboard! 🎓', 'success');
-        }, 1000);
-    });
-
-    // Navigation functions
-    function showPage(event, pageId) {
-        if (event) {
-            event.preventDefault();
-        }
-        
-        // Hide all pages
-        document.querySelectorAll('.page-section').forEach(page => {
-            page.classList.remove('active');
-        });
-        
-        // Show selected page
-        document.getElementById(pageId).classList.add('active');
-        
-        // Update active link
-        document.querySelectorAll('.sidebar-link').forEach(link => {
-            link.classList.remove('active');
-        });
-        
-        // Add active class to clicked link
-        if (event && event.currentTarget) {
-            event.currentTarget.classList.add('active');
-        }
-        
-        // Close sidebar on mobile
-        if (window.innerWidth <= 768) {
-            closeSidebar();
-        }
-    }
-
-    function toggleSidebar() {
-        const sidebar = document.getElementById('sidebar');
-        const overlay = document.querySelector('.overlay');
-        sidebar.classList.toggle('open');
-        overlay.classList.toggle('active');
-    }
-
-    function closeSidebar() {
-        const sidebar = document.getElementById('sidebar');
-        const overlay = document.querySelector('.overlay');
-        sidebar.classList.remove('open');
-        overlay.classList.remove('active');
-    }
-
-    function logout() {
-        if (confirm('Are you sure you want to logout?')) {
-            showNotification('Logging out...', 'info');
-            setTimeout(() => {
-                window.location.href = 'logout.php';
-            }, 1000);
-        }
-    }
-
-    // Dashboard functions
-    function renderDashboard() {
-        document.getElementById('enrolledCount').textContent = enrolledCourses.size;
-        document.getElementById('pendingTasks').textContent = tasks.filter(t => t.status === 'pending').length;
-        document.getElementById('completedTasks').textContent = tasks.filter(t => t.status === 'graded').length;
-
-        const dashboardCourses = document.getElementById('dashboardCourses');
-        dashboardCourses.innerHTML = studentCourses.map(course => `
-            <div class="course-card">
-                <h4>${course.name}</h4>
-                <p><strong>Code:</strong> ${course.code}</p>
-                <p><strong>Instructor:</strong> ${course.instructor}</p>
-                <p><strong>Progress:</strong> ${course.progress}%</p>
-                <div class="progress-bar">
-                    <div class="progress-fill" style="width: ${course.progress}%"></div>
-                </div>
-                <p><strong>Grade:</strong> ${course.grade}</p>
-            </div>
-        `).join('');
-
-        const upcomingDeadlines = document.getElementById('upcomingDeadlines');
-        const pendingTasks = tasks.filter(t => t.status === 'pending').slice(0, 3);
-        upcomingDeadlines.innerHTML = pendingTasks.map(task => `
-            <div class="deadline-item">
-                <h4>${task.title}</h4>
-                <p><strong>Course:</strong> ${task.courseName}</p>
-                <p><strong>Due:</strong> ${task.dueDate}</p>
-                <p><strong>Type:</strong> ${task.type}</p>
-            </div>
-        `).join('');
-    }
-
-    // Course registration functions
-    function renderCourseRegistration() {
-        const tbody = document.getElementById('coursesTableBody');
-        tbody.innerHTML = availableCourses.map(course => {
-            const isEnrolled = course.is_enrolled;
-            const isFull = course.enrolled >= course.capacity;
-            const status = isEnrolled ? 'enrolled' : (isFull ? 'full' : 'available');
-            return `
-                <tr>
-                    <td>
-                        <input type="checkbox" 
-                               value="${course.id}" 
-                               onchange="handleCourseSelection('${course.id}')"
-                               ${isEnrolled ? 'disabled' : ''}
-                               ${isFull ? 'disabled' : ''}>
-                    </td>
-                    <td><strong>${course.code}</strong></td>
-                    <td>${course.name}</td>
-                    <td>${course.credits}</td>
-                    <td>${course.instructor}</td>
-                    <td>${course.schedule}</td>
-                    <td>${course.enrolled}/${course.capacity}</td>
-                    <td>
-                        <span class="status-badge status-${status}">
-                            ${status.charAt(0).toUpperCase() + status.slice(1)}
-                        </span>
-                    </td>
-                    <td>
-                        <button class="btn-secondary" onclick="viewCourseDetails('${course.id}')">
-                            View Details
-                        </button>
-                    </td>
-                </tr>
-            `;
-        }).join('');
-    }
-
-    function handleCourseSelection(courseId) {
-        const checkbox = document.querySelector(`input[value="${courseId}"]`);
-        if (checkbox.checked) {
-            selectedCourses.add(courseId);
-        } else {
-            selectedCourses.delete(courseId);
-        }
-        updateSelectedCount();
-    }
-
-    function toggleSelectAll() {
-        const selectAllCheckbox = document.getElementById('selectAll');
-        const courseCheckboxes = document.querySelectorAll('#coursesTableBody input[type="checkbox"]:not(:disabled)');
-        courseCheckboxes.forEach(checkbox => {
-            checkbox.checked = selectAllCheckbox.checked;
-            handleCourseSelection(checkbox.value);
-        });
-    }
-
-    function updateSelectedCount() {
-        document.getElementById('selectedCount').textContent = selectedCourses.size;
-    }
-
-    function registerSelectedCourses() {
-        if (selectedCourses.size === 0) {
-            showNotification('Please select at least one course to register.', 'error');
-            return;
-        }
-        // Send selected courses to backend for registration
-        fetch('register_courses.php', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ courses: Array.from(selectedCourses) })
-        })
-        .then(res => res.json())
-        .then(data => {
-            if (data.success) {
-                showNotification(`Successfully registered for ${selectedCourses.size} courses!`, 'success');
-                selectedCourses.clear();
-                document.getElementById('selectAll').checked = false;
-                updateSelectedCount();
-                fetchStudentCourses();
-                renderCourseRegistration();
-                renderDashboard();
-            } else {
-                showNotification(data.message || 'Registration failed.', 'error');
-            }
-        })
-        .catch(error => {
-            showNotification('Error submitting task: ' + error.message, 'error');
-        });
-    }
-
-    function clearSelection() {
-        selectedCourses.clear();
-        document.getElementById('selectAll').checked = false;
-        document.querySelectorAll('#coursesTableBody input[type="checkbox"]').forEach(checkbox => {
-            checkbox.checked = false;
-        });
-        updateSelectedCount();
-    }
-
-    function filterCourses() {
-        const searchTerm = document.getElementById('courseSearch').value.toLowerCase();
-        const semesterFilter = document.getElementById('semesterFilter').value;
-        const programFilter = document.getElementById('programFilter').value;
-        const rows = document.querySelectorAll('#coursesTableBody tr');
-        rows.forEach(row => {
-            const text = row.textContent.toLowerCase();
-            const matchesSearch = searchTerm === '' || text.includes(searchTerm);
-            const matchesSemester = semesterFilter === '' || text.includes(semesterFilter);
-            const matchesProgram = programFilter === '' || text.includes(programFilter);
-            row.style.display = matchesSearch && matchesSemester && matchesProgram ? '' : 'none';
-        });
-    }
-
-    function viewCourseDetails(courseId) {
-        const course = availableCourses.find(c => c.id === courseId);
-        if (course) {
-            const details = `Course Details:
-
-Code: ${course.code}
-Name: ${course.name}
-Instructor: ${course.instructor}
-Credits: ${course.credits}
-Program: ${course.program}
-Semester: ${course.semester}
-Schedule: ${course.schedule}
-Description: ${course.description}
-Prerequisites: ${course.prerequisites}
-Enrolled: ${course.enrolled}/${course.capacity}`;
-            alert(details);
-        }
-    }
-
-    // My courses functions
-    function renderMyCourses() {
-        const coursesGrid = document.getElementById('myCoursesGrid');
-        coursesGrid.innerHTML = studentCourses.map(course => `
-            <div class="enrolled-course-card">
-                <div class="course-header">
-                    <div>
-                        <h3>${course.name}</h3>
-                        <p><strong>Instructor:</strong> ${course.instructor}</p>
-                    </div>
-                    <span class="course-code">${course.code}</span>
-                </div>
-                <div class="course-details">
-                    <p><strong>Progress:</strong> ${course.progress}%</p>
-                    <div class="progress-bar">
-                        <div class="progress-fill" style="width: ${course.progress}%"></div>
-                    </div>
-                    <p><strong>Current Grade:</strong> ${course.grade}</p>
-                    <p><strong>Tasks Completed:</strong> ${course.tasksCompleted}/${course.totalTasks}</p>
-                    <p><strong>Next Deadline:</strong> ${course.nextDeadline}</p>
-                </div>
-                <div class="course-actions">
-                    <button class="btn-primary" onclick="viewCourseTasks('${course.id}')">
-                        View Tasks
-                    </button>
-                    <button class="btn-secondary" onclick="viewCourseGrades('${course.id}')">
-                        View Grades
-                    </button>
-                </div>
-            </div>
-        `).join('');
-    }
-
-    function viewCourseTasks(courseId) {
-        showPage(event, 'tasks');
-        const course = studentCourses.find(c => c.id === courseId);
-        const courseTasks = course ? tasks.filter(task => task.courseCode === course.code) : [];
-        renderFilteredTasks(courseTasks);
-    }
-
-    function viewCourseGrades(courseId) {
-        showPage(event, 'grades');
-        const course = studentCourses.find(c => c.id === courseId);
-        if (course) {
-            setTimeout(() => {
-                const gradeCard = document.querySelector(`[data-course-code="${course.code}"]`);
-                if (gradeCard) {
-                    gradeCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            // Initialize the dashboard
+            async function initDashboard() {
+                showLoading(true);
+                try {
+                    await Promise.all([
+                        fetchAvailableCourses(),
+                        fetchStudentCourses(),
+                        fetchTasks(),
+                        fetchGrades()
+                    ]);
+                    renderDashboard();
+                    showNotification('Dashboard loaded successfully!', 'success');
+                } catch (error) {
+                    console.error('Initialization error:', error);
+                    showNotification('Error loading dashboard data: ' + error.message, 'error');
+                } finally {
+                    showLoading(false);
                 }
-            }, 100);
-        }
-    }
-
-    // Tasks functions
-    function renderTasks() {
-        renderFilteredTasks(tasks);
-    }
-
-    function renderFilteredTasks(taskList) {
-        const tasksGrid = document.getElementById('tasksGrid');
-        tasksGrid.innerHTML = taskList.map(task => `
-            <div class="task-card ${task.status}">
-                <div class="task-header">
-                    <h3>${task.title}</h3>
-                    <span class="task-status ${task.status}">
-                        ${getStatusIcon(task.status)}
-                        ${task.status.charAt(0).toUpperCase() + task.status.slice(1)}
-                    </span>
-                </div>
-                <div class="task-details">
-                    <p><strong>Course:</strong> ${task.courseName}</p>
-                    <p><strong>Type:</strong> ${task.type}</p>
-                    <p><strong>Due Date:</strong> ${task.dueDate}</p>
-                    <p><strong>Max Marks:</strong> ${task.maxMarks}</p>
-                    ${task.grade ? `<p><strong>Grade:</strong> ${task.grade}/${task.maxMarks}</p>` : ''}
-                    <p><strong>Description:</strong> ${task.description}</p>
-                </div>
-                <div class="task-actions">
-                    ${getTaskActions(task)}
-                </div>
-            </div>
-        `).join('');
-    }
-
-    function getStatusIcon(status) {
-        const icons = {
-            'pending': '⏰',
-            'submitted': '✅',
-            'graded': '🏆'
-        };
-        return icons[status] || '📄';
-    }
-
-    function getTaskActions(task) {
-        switch (task.status) {
-            case 'pending':
-                return `<button class="btn-primary" onclick="submitTask('${task.id}')">📤 Submit Task</button>`;
-            case 'submitted':
-                return `<button class="btn-secondary" onclick="viewSubmission('${task.id}')">👁️ View Submission</button>`;
-            case 'graded':
-                return `
-                    <button class="btn-secondary" onclick="viewFeedback('${task.id}')">📋 View Feedback</button>
-                    <button class="btn-secondary" onclick="downloadGrade('${task.id}')">📥 Download Grade</button>
-                `;
-            default:
-                return '';
-        }
-    }
-
-    function filterTasks(status) {
-        currentTaskFilter = status;
-        document.querySelectorAll('.filter-btn').forEach(btn => {
-            btn.classList.remove('active');
-        });
-        event.target.classList.add('active');
-        const filteredTasks = status === 'all' ? tasks : tasks.filter(task => task.status === status);
-        renderFilteredTasks(filteredTasks);
-    }
-
-    function submitTask(taskId) {
-        const task = tasks.find(t => t.id === taskId);
-        if (task) {
-            openTaskModal(task);
-        }
-    }
-
-    function viewSubmission(taskId) {
-        const task = tasks.find(t => t.id === taskId);
-        if (task) {
-            showNotification(`Viewing submission for "${task.title}"`, 'info');
-        }
-    }
-
-    function viewFeedback(taskId) {
-        const task = tasks.find(t => t.id === taskId);
-        if (task && task.feedback) {
-            alert(`Feedback for "${task.title}":\n\n${task.feedback}`);
-        } else {
-            showNotification('No feedback available yet.', 'info');
-        }
-    }
-
-    function downloadGrade(taskId) {
-        const task = tasks.find(t => t.id === taskId);
-        if (task) {
-            showNotification(`Downloading grade report for "${task.title}"`, 'success');
-        }
-    }
-
-    // Task modal functions
-    function openTaskModal(task) {
-        document.getElementById('modalTaskId').value = task.id;
-        document.getElementById('modalCourseCode').value = task.courseCode;
-        document.getElementById('modalTaskTitle').value = task.title;
-        document.getElementById('modalCourse').value = task.courseName;
-        document.getElementById('modalDueDate').value = task.dueDate;
-        document.getElementById('taskModal').style.display = 'block';
-    }
-
-    function closeTaskModal() {
-        document.getElementById('taskModal').style.display = 'none';
-        document.getElementById('taskSubmissionForm').reset();
-        document.getElementById('fileList').innerHTML = '';
-    }
-
-    function handleFileSelection(event) {
-        const files = event.target.files;
-        const fileList = document.getElementById('fileList');
-        fileList.innerHTML = '';
-        Array.from(files).forEach(file => {
-            const fileItem = document.createElement('div');
-            fileItem.className = 'file-item';
-            fileItem.innerHTML = `
-                <div class="file-info">
-                    <span>📄</span>
-                    <span class="file-name">${file.name}</span>
-                    <span class="file-size">(${(file.size / 1024).toFixed(1)} KB)</span>
-                </div>
-                <button type="button" class="file-remove" onclick="removeFile(this)">Remove</button>
-            `;
-            fileList.appendChild(fileItem);
-        });
-    }
-
-    function removeFile(button) {
-        const fileItem = button.closest('.file-item');
-        if (fileItem) {
-            fileItem.remove();
-        }
-    }
-
-    function handleTaskSubmission(event) {
-        event.preventDefault();
-        const formData = new FormData(event.target);
-        
-        fetch('submit_task.php', {
-            method: 'POST',
-            body: formData
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                showNotification('Task submitted successfully!', 'success');
-                closeTaskModal();
-                fetchTasks();
-            } else {
-                showNotification('Error submitting task: ' + data.message, 'error');
             }
-        })
-        .catch(error => {
-            showNotification('Error submitting task: ' + error.message, 'error');
-        });
-    }
 
-    function showNotification(message, type) {
-        const notification = document.createElement('div');
-        notification.className = `notification ${type}`;
-        notification.style.position = 'fixed';
-        notification.style.bottom = '20px';
-        notification.style.right = '20px';
-        notification.style.padding = '1rem 1.5rem';
-        notification.style.borderRadius = '8px';
-        notification.style.boxShadow = '0 4px 12px rgba(0,0,0,0.15)';
-        notification.style.zIndex = '1000';
-        notification.style.animation = 'slideIn 0.3s ease';
-        
-        notification.textContent = message;
-        document.body.appendChild(notification);
-        setTimeout(() => {
-            if (notification.parentNode) {
-                notification.style.animation = 'slideIn 0.3s ease reverse';
-                setTimeout(() => notification.remove(), 300);
+            // Data Fetching Functions
+            async function fetchAvailableCourses() {
+                try {
+                    const response = await fetch(`get_available_courses.php?accounts_id=${currentStudentId}`);
+                    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                    
+                    const data = await response.json();
+                    
+                    if (data.success) {
+                        availableCourses = data.courses;
+                        renderCourseRegistration();
+                        return true;
+                    } else {
+                        throw new Error(data.message || 'Failed to load courses');
+                    }
+                } catch (error) {
+                    console.error('Error fetching courses:', error);
+                    showNotification('Error loading available courses: ' + error.message, 'error');
+                    return false;
+                }
             }
-        }, 3000);
-    }
 
-    // Close modal when clicking outside
-    window.onclick = function(event) {
-        const modal = document.getElementById('taskModal');
-        if (event.target === modal || event.target.classList.contains('modal')) {
-            closeTaskModal();
-        }
-    }
+            async function fetchStudentCourses() {
+                try {
+                    const response = await fetch(`get_student_courses.php?accounts_id=${currentStudentId}`);
+                    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                    
+                    const data = await response.json();
+                    
+                    if (data.success) {
+                        studentCourses = data.courses;
+                        enrolledCourses = new Set(studentCourses.map(c => c.id));
+                        renderMyCourses();
+                        return true;
+                    } else {
+                        throw new Error(data.message || 'Failed to load student courses');
+                    }
+                } catch (error) {
+                    console.error('Error fetching student courses:', error);
+                    showNotification('Error loading your courses: ' + error.message, 'error');
+                    return false;
+                }
+            }
 
-    // Close sidebar when clicking outside on mobile
-    document.addEventListener('click', function(e) {
-        const sidebar = document.getElementById('sidebar');
-        const hamburger = document.querySelector('.hamburger');
-        if (window.innerWidth <= 768 && 
-            !sidebar.contains(e.target) && 
-            !hamburger.contains(e.target) &&
-            sidebar.classList.contains('open')) {
-            closeSidebar();
-        }
-    });
+            async function fetchTasks() {
+                try {
+                    const response = await fetch(`get_student_tasks.php?accounts_id=${currentStudentId}`);
+                    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                    
+                    const data = await response.json();
+                    
+                    if (data.success) {
+                        tasks = data.tasks;
+                        renderTasks();
+                        return true;
+                    } else {
+                        throw new Error(data.message || 'Failed to load tasks');
+                    }
+                } catch (error) {
+                    console.error('Error fetching tasks:', error);
+                    showNotification('Error loading tasks: ' + error.message, 'error');
+                    return false;
+                }
+            }
 
-    // Handle responsive sidebar
-    window.addEventListener('resize', function() {
-        if (window.innerWidth > 768) {
-            closeSidebar();
-        }
-    });
+            async function fetchGrades() {
+                try {
+                    const response = await fetch(`get_student_grades.php?accounts_id=${currentStudentId}`);
+                    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                    
+                    const data = await response.json();
+                    
+                    if (data.success) {
+                        grades = data.grades;
+                        renderGrades();
+                        updateGradeStats();
+                        return true;
+                    } else {
+                        throw new Error(data.message || 'Failed to load grades');
+                    }
+                } catch (error) {
+                    console.error('Error fetching grades:', error);
+                    showNotification('Error loading grades: ' + error.message, 'error');
+                    return false;
+                }
+            }
+
+            // Page Navigation
+            function showPage(clickedElement, pageId) {
+                // Hide all pages
+                document.querySelectorAll('.page-section').forEach(page => {
+                    page.classList.remove('active');
+                });
+                
+                // Show selected page
+                const targetPage = document.getElementById(pageId);
+                if (targetPage) {
+                    targetPage.classList.add('active');
+                }
+                
+                // Update active link
+                document.querySelectorAll('.sidebar-link').forEach(link => {
+                    link.classList.remove('active');
+                });
+                
+                // Add active class to clicked link
+                if (clickedElement) {
+                    clickedElement.classList.add('active');
+                } else {
+                    const activeLink = document.querySelector(`.sidebar-link[data-page="${pageId}"]`);
+                    if (activeLink) activeLink.classList.add('active');
+                }
+                
+                // Close sidebar on mobile
+                if (window.innerWidth <= 768) {
+                    closeSidebar();
+                }
+            }
+
+            // UI Functions
+            function toggleSidebar() {
+                if (sidebar) sidebar.classList.toggle('open');
+                if (overlay) overlay.classList.toggle('active');
+            }
+
+            function closeSidebar() {
+                if (sidebar) sidebar.classList.remove('open');
+                if (overlay) overlay.classList.remove('active');
+            }
+
+            function handleResponsiveLayout() {
+                if (window.innerWidth > 768) {
+                    closeSidebar();
+                }
+            }
+
+            function showLoading(show) {
+                const loader = document.getElementById('loadingOverlay');
+                if (loader) loader.style.display = show ? 'flex' : 'none';
+            }
+
+            function showNotification(message, type) {
+                const notification = document.createElement('div');
+                notification.className = `notification ${type}`;
+                notification.textContent = message;
+                document.body.appendChild(notification);
+
+                setTimeout(() => {
+                    notification.style.opacity = '0';
+                    setTimeout(() => notification.remove(), 300);
+                }, 3000);
+            }
+
+            function logout() {
+                if (confirm('Are you sure you want to logout?')) {
+                    showNotification('Logging out...', 'info');
+                    setTimeout(() => {
+                        window.location.href = 'logout.php';
+                    }, 1000);
+                }
+            }
+
+            // Course Registration Functions
+            function filterCourses() {
+                const searchTerm = courseSearch?.value.toLowerCase() || '';
+                
+                if (!coursesTableBody) return;
+                
+                const rows = coursesTableBody.querySelectorAll('tr');
+                rows.forEach(row => {
+                    const text = row.textContent.toLowerCase();
+                    row.style.display = text.includes(searchTerm) ? '' : 'none';
+                });
+            }
+
+            function toggleSelectAll() {
+                if (!selectAllCheckbox || !coursesTableBody) return;
+                
+                const checkboxes = coursesTableBody.querySelectorAll('input[type="checkbox"]:not(:disabled)');
+                checkboxes.forEach(checkbox => {
+                    checkbox.checked = selectAllCheckbox.checked;
+                    const courseId = checkbox.value;
+                    if (checkbox.checked) {
+                        selectedCourses.add(courseId);
+                    } else {
+                        selectedCourses.delete(courseId);
+                    }
+                });
+                updateSelectedCount();
+            }
+
+            function handleCourseSelection(courseId) {
+                if (selectedCourses.has(courseId)) {
+                    selectedCourses.delete(courseId);
+                } else {
+                    selectedCourses.add(courseId);
+                }
+                updateSelectedCount();
+            }
+
+            function updateSelectedCount() {
+                if (selectedCountSpan) {
+                    selectedCountSpan.textContent = selectedCourses.size;
+                }
+            }
+
+            async function registerSelectedCourses() {
+                if (selectedCourses.size === 0) {
+                    showNotification('Please select at least one course to register.', 'error');
+                    return;
+                }
+
+                showLoading(true);
+                try {
+                    const response = await fetch('register_courses.php', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            student_id: currentStudentId,
+                            courses: Array.from(selectedCourses)
+                        })
+                    });
+
+                    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                    
+                    const data = await response.json();
+
+                    if (data.success) {
+                        showNotification(`Successfully registered for ${selectedCourses.size} courses!`, 'success');
+                        selectedCourses.clear();
+                        if (selectAllCheckbox) selectAllCheckbox.checked = false;
+                        updateSelectedCount();
+                        await Promise.all([fetchAvailableCourses(), fetchStudentCourses()]);
+                        renderDashboard();
+                    } else {
+                        throw new Error(data.message || 'Registration failed');
+                    }
+                } catch (error) {
+                    console.error('Registration error:', error);
+                    showNotification(error.message, 'error');
+                } finally {
+                    showLoading(false);
+                }
+            }
+
+            function clearSelection() {
+                selectedCourses.clear();
+                if (selectAllCheckbox) selectAllCheckbox.checked = false;
+                if (coursesTableBody) {
+                    coursesTableBody.querySelectorAll('input[type="checkbox"]').forEach(checkbox => {
+                        checkbox.checked = false;
+                    });
+                }
+                updateSelectedCount();
+            }
+
+            // Render Functions
+            function renderDashboard() {
+                // Update stats
+                if (enrolledCount) enrolledCount.textContent = studentCourses.length;
+                
+                const pendingTasksCount = tasks.filter(t => t.status === 'pending').length;
+                if (pendingTasks) pendingTasks.textContent = pendingTasksCount;
+                
+                const completedTasksCount = tasks.filter(t => t.status === 'completed' || t.status === 'graded').length;
+                if (completedTasks) completedTasks.textContent = completedTasksCount;
+                
+                // Calculate average grade if grades exist
+                if (grades.length > 0) {
+                    const total = grades.reduce((sum, grade) => sum + parseFloat(grade.score), 0);
+                    const average = total / grades.length;
+                    if (avgGrade) avgGrade.textContent = average.toFixed(1);
+                }
+
+                // Render course cards for dashboard
+                if (dashboardCourses) {
+                    dashboardCourses.innerHTML = studentCourses.slice(0, 3).map(course => `
+                        <div class="course-card">
+                            <h4>${course.name}</h4>
+                            <p><strong>Code:</strong> ${course.code}</p>
+                            <p><strong>Instructor:</strong> ${course.instructor}</p>
+                        </div>
+                    `).join('');
+                }
+
+                // Render upcoming deadlines
+                if (upcomingDeadlines) {
+                    const upcoming = tasks
+                        .filter(t => t.status === 'pending')
+                        .slice(0, 3);
+
+                    upcomingDeadlines.innerHTML = upcoming.map(task => `
+                        <div class="deadline-item">
+                            <h4>${task.title}</h4>
+                            <p><strong>Due:</strong> ${new Date(task.due_date).toLocaleDateString()}</p>
+                        </div>
+                    `).join('');
+                }
+            }
+
+            function renderCourseRegistration() {
+                if (!coursesTableBody) return;
+                
+                coursesTableBody.innerHTML = availableCourses.map(course => `
+                    <tr>
+                        <td><input type="checkbox" value="${course.id}" 
+                            ${enrolledCourses.has(course.id) ? 'disabled' : ''} 
+                            onchange="handleCourseSelection('${course.id}')"></td>
+                        <td>${course.code}</td>
+                        <td>${course.name}</td>
+                        <td>${course.credits}</td>
+                        <td>${course.instructor}</td>
+                        <td>${course.schedule}</td>
+                        <td>${course.enrolled || 0}/${course.capacity || 'N/A'}</td>
+                        <td>${enrolledCourses.has(course.id) ? 'Enrolled' : 'Available'}</td>
+                        <td>
+                            <button class="btn-small" onclick="viewCourseDetails('${course.id}')">
+                                Details
+                            </button>
+                        </td>
+                    </tr>
+                `).join('');
+            }
+
+            function renderMyCourses() {
+                if (!myCoursesGrid) return;
+                
+                myCoursesGrid.innerHTML = studentCourses.map(course => `
+                    <div class="course-card">
+                        <h3>${course.name}</h3>
+                        <p><strong>Code:</strong> ${course.code}</p>
+                        <p><strong>Instructor:</strong> ${course.instructor}</p>
+                        <p><strong>Schedule:</strong> ${course.schedule}</p>
+                        <div class="course-actions">
+                            <button class="btn-small" onclick="viewCourseDetails('${course.id}')">
+                                View Details
+                            </button>
+                        </div>
+                    </div>
+                `).join('');
+            }
+
+            function renderTasks() {
+                if (!tasksGrid) return;
+                
+                let filteredTasks = tasks;
+                if (currentTaskFilter === 'pending') {
+                    filteredTasks = tasks.filter(t => t.status === 'pending');
+                } else if (currentTaskFilter === 'submitted') {
+                    filteredTasks = tasks.filter(t => t.status === 'submitted');
+                } else if (currentTaskFilter === 'graded') {
+                    filteredTasks = tasks.filter(t => t.status === 'graded');
+                }
+
+                tasksGrid.innerHTML = filteredTasks.map(task => `
+                    <div class="task-card ${task.status}">
+                        <h3>${task.title}</h3>
+                        <p><strong>Course:</strong> ${task.course_name || task.course_code}</p>
+                        <p><strong>Due:</strong> ${new Date(task.due_date).toLocaleDateString()}</p>
+                        <p><strong>Status:</strong> ${task.status}</p>
+                        ${task.status === 'pending' ? `
+                            <button class="btn-small" onclick="submitTask('${task.id}', '${task.course_code}')">
+                                Submit
+                            </button>
+                        ` : ''}
+                        ${task.status === 'graded' ? `
+                            <p><strong>Grade:</strong> ${task.grade || 'N/A'}</p>
+                        ` : ''}
+                    </div>
+                `).join('');
+            }
+
+            function renderGrades() {
+                const gradesDetailed = document.getElementById('gradesDetailed');
+                if (!gradesDetailed) return;
+                
+                gradesDetailed.innerHTML = grades.map(grade => `
+                    <div class="grade-card">
+                        <h3>${grade.course_name}</h3>
+                        <p><strong>Task:</strong> ${grade.task_title}</p>
+                        <p><strong>Score:</strong> ${grade.score}</p>
+                        <p><strong>Feedback:</strong> ${grade.feedback || 'No feedback provided'}</p>
+                    </div>
+                `).join('');
+            }
+
+            function updateGradeStats() {
+                const overallGrade = document.getElementById('overallGrade');
+                const totalCourses = document.getElementById('totalCourses');
+                const completedTasksCount = document.getElementById('completedTasksCount');
+                const averageScore = document.getElementById('averageScore');
+                
+                if (grades.length > 0) {
+                    const total = grades.reduce((sum, grade) => sum + parseFloat(grade.score), 0);
+                    const average = total / grades.length;
+                    
+                    if (overallGrade) overallGrade.textContent = average.toFixed(1);
+                    if (totalCourses) totalCourses.textContent = new Set(grades.map(g => g.course_id)).size;
+                    if (completedTasksCount) completedTasksCount.textContent = `${grades.length}/${tasks.length}`;
+                    if (averageScore) averageScore.textContent = `${average.toFixed(1)}%`;
+                }
+            }
+
+            // Task submission functions
+            function submitTask(taskId, courseCode) {
+                // Implement task submission modal opening
+                console.log(`Submitting task ${taskId} for course ${courseCode}`);
+                // You would typically open a modal here for submission
+            }
+
+            function viewCourseDetails(courseId) {
+                // Implement course details viewing
+                console.log(`Viewing details for course ${courseId}`);
+            }
+
+            // Make functions available globally
+            window.showPage = showPage;
+            window.toggleSidebar = toggleSidebar;
+            window.closeSidebar = closeSidebar;
+            window.logout = logout;
+            window.filterCourses = filterCourses;
+            window.toggleSelectAll = toggleSelectAll;
+            window.handleCourseSelection = handleCourseSelection;
+            window.registerSelectedCourses = registerSelectedCourses;
+            window.clearSelection = clearSelection;
+            window.viewCourseDetails = viewCourseDetails;
+            window.submitTask = submitTask;
+        });
     </script>
 </body>
 </html>

@@ -32,13 +32,16 @@ if (isset($_SESSION['user_id'])) {
 // function sanitizeInput($input) {
 //     return htmlspecialchars(trim($input));
 // }
+
 // function generateToken($length = 32) {
 //     return bin2hex(random_bytes($length));
 // }
+
 // function sendPasswordResetEmail($email, $token) {
 //     // Implement your mail sending logic here
 //     // mail($email, "Password Reset", "Reset link: ...?token=$token");
 // }
+
 function getCurrentAcademicYear() {
     $currentMonth = date('n'); // Get current month (1-12)
     $currentYear = date('Y');
@@ -64,13 +67,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $messageType = 'error';
             } else {
                 // Try student login
-                $stmt = $pdo->prepare("SELECT id, fullname, email, phone, pass, is_verified, role FROM accounts WHERE student_id = ? AND role = 'student' AND is_active = 1");
+                $stmt = $pdo->prepare("SELECT accounts_id, fullname, email, phone, pass, is_verified, role FROM accounts WHERE accounts_id = ? AND role = 'student' AND is_active = 1");
                 $stmt->execute([$loginId]);
                 $user = $stmt->fetch();
 
                 // If not found, try staff/instructor/admin login
                 if (!$user) {
-                    $stmt = $pdo->prepare("SELECT id, fullname, email, phone, pass, is_verified, role FROM accounts WHERE staff_id = ? AND role IN ('admin','instructor') AND is_active = 1");
+                    $stmt = $pdo->prepare("SELECT accounts_id, fullname, email, phone, pass, is_verified, role FROM accounts WHERE accounts_id = ? AND role IN ('admin','instructor') AND is_active = 1");
                     $stmt->execute([$loginId]);
                     $user = $stmt->fetch();
                 }
@@ -80,14 +83,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $message = 'Please verify your account before logging in';
                         $messageType = 'error';
                     } else {
-                        $_SESSION['user_id'] = $user['id'];
+                        $_SESSION['user_id'] = $user['accounts_id'];
                         $_SESSION['user_name'] = $user['fullname'];
                         $_SESSION['user_email'] = $user['email'];
                         $_SESSION['user_role'] = $user['role'];
                         $_SESSION['login_time'] = time();
 
-                        $updateStmt = $pdo->prepare("UPDATE accounts SET last_login = NOW() WHERE id = ?");
-                        $updateStmt->execute([$user['id']]);
+                        $updateStmt = $pdo->prepare("UPDATE accounts SET last_login = NOW() WHERE accounts_id = ?");
+                        $updateStmt->execute([$user['accounts_id']]);
 
                         // Redirect based on role
                         switch ($user['role']) {
@@ -112,17 +115,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         case 'signup':
             $studentId = sanitizeInput($_POST['student_id']);
-            $firstName = sanitizeInput($_POST['first_name']);
-            $lastName = sanitizeInput($_POST['last_name']);
+            $surName = sanitizeInput($_POST['sur_name']);
+            $otherName = sanitizeInput($_POST['other_name']);
             $email = filter_var($_POST['email'], FILTER_SANITIZE_EMAIL);
             $program = $_POST['program'];
+            $level = $_POST['level'];
             $phone = $_POST['phone'];
             $password = $_POST['password'];
             $confirmPassword = $_POST['confirm_password'];
 
             // Validation
-            if (empty($studentId) || empty($firstName) || empty($lastName) || empty($email) || empty($program) ||
-                empty($phone) || empty($password) || empty($confirmPassword)) {
+            if (empty($studentId) || empty($surName) || empty($otherName) || empty($email) || empty($program) ||
+                empty($phone) || empty($password) || empty($level) || empty($confirmPassword)) {
                 $message = 'All fields are required';
                 $messageType = 'error';
             } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
@@ -133,14 +137,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $messageType = 'error';
             } else {
                 // Check if email exists
-                $stmt = $pdo->prepare("SELECT id FROM accounts WHERE email = ?");
+                $stmt = $pdo->prepare("SELECT accounts_id FROM accounts WHERE email = ?");
                 $stmt->execute([$email]);
                 if ($stmt->fetch()) {
                     $message = 'Email already registered';
                     $messageType = 'error';
                 } else {
                     // Check if student ID exists
-                    $stmt = $pdo->prepare("SELECT id FROM accounts WHERE student_id = ?");
+                    $stmt = $pdo->prepare("SELECT accounts_id FROM accounts WHERE accounts_id = ?");
                     $stmt->execute([$studentId]);
                     if ($stmt->fetch()) {
                         $message = 'Student ID already registered';
@@ -150,15 +154,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $verificationToken = generateToken();
                         $academicYear = getCurrentAcademicYear();
 
-                        $stmt = $pdo->prepare("INSERT INTO accounts 
-                            (student_id, first_name, last_name, email, pass, verification_token, phone, program, role, created_at, is_active, is_verified, academic_year) 
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'student', NOW(), 1, 1, ?)");
+                        // Start transaction
+                        $pdo->beginTransaction();
 
-                        if ($stmt->execute([$studentId, $firstName, $lastName, $email, $hashedPassword, $verificationToken, $phone, $program, $academicYear])) {
+                        try {
+                            // Insert into accounts table
+                            $stmt = $pdo->prepare("INSERT INTO accounts 
+                                (accounts_id, sur_name, other_name, email, pass, verification_token, phone, role, created_at, is_active, is_verified) 
+                                VALUES (?, ?, ?, ?, ?, ?, ?, 'student', NOW(), 1, 1)");
+                            $stmt->execute([$studentId, $surName, $otherName, $email, $hashedPassword, $verificationToken, $phone]);
+
+                            // Insert into students table
+                            $stmt = $pdo->prepare("INSERT INTO students 
+                                (accounts_id, program, level, semester, academic_year)
+                                VALUES (?, ?, ?, 'Semester 1', ?)");
+                            $stmt->execute([$studentId, $program, $level, $academicYear]);
+
+                            // Commit transaction
+                            $pdo->commit();
+
                             $message = 'Account created successfully! Please check your email to verify your account.';
                             $messageType = 'success';
                             echo "<script>setTimeout(() => showForm('login'), 2000);</script>";
-                        } else {
+                        } catch (Exception $e) {
+                            $pdo->rollBack();
                             $message = 'Error creating account. Please try again.';
                             $messageType = 'error';
                         }
@@ -177,7 +196,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $message = 'Invalid email format';
                 $messageType = 'error';
             } else {
-                $stmt = $pdo->prepare("SELECT id FROM accounts WHERE email = ?");
+                $stmt = $pdo->prepare("SELECT accounts_id FROM accounts WHERE email = ?");
                 $stmt->execute([$email]);
                 $user = $stmt->fetch();
 
@@ -206,7 +225,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CodeLab - Authentication</title>
+    <title>Electronic Manual</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <style>
         * {
@@ -388,8 +407,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <body>
     <div class="auth-container">
         <div class="auth-header">
-            <h1><i class="fas fa-code"></i> CodeLab</h1>
-            <p>Master the art of programming</p>
+            <h1><i class="fas fa-code"></i>Electronic Manual</h1>
+            <p>The Modern Way of Learning</p>
         </div>
 
         <?php if ($message): ?>
@@ -432,12 +451,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <input type="text" name="student_id" placeholder="e.g., CS20230001" required>
                 </div>
                 <div class="form-group">
-                    <label>First Name</label>
-                    <input type="text" name="first_name" placeholder="First name" required>
+                    <label>Surname</label>
+                    <input type="text" name="sur_name" placeholder="Surname" required>
                 </div>
                 <div class="form-group">
-                    <label>Last Name</label>
-                    <input type="text" name="last_name" placeholder="Last name" required>
+                    <label>Other name</label>
+                    <input type="text" name="other_name" placeholder="Other name" required>
                 </div>
             </div>
             <div class="form-group">
@@ -452,6 +471,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <option value="Information Technology">Information Technology</option>
                     <option value="Software Engineering">Software Engineering</option>
                     <option value="Data Science">Data Science</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Level</label>
+                <select name="level" class="form-select" required>
+                    <option value="">Select Level</option>
+                    <option value="100">100</option>
+                    <option value="200">200</option>
+                    <option value="300">300</option>
+                    <option value="400">400</option>
                 </select>
             </div>
             <div class="form-group">

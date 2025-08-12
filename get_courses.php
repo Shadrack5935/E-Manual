@@ -11,8 +11,8 @@ try {
         throw new Exception('User not authenticated');
     }
 
-    // Get instructor's staff_id
-    $stmt = $pdo->prepare("SELECT staff_id FROM accounts WHERE id = ?");
+    // Get instructor's accounts
+    $stmt = $pdo->prepare("SELECT accounts_id FROM accounts WHERE accounts_id = ? and role = 'instructor'");
     $stmt->execute([$instructor_id]);
     $instructor = $stmt->fetch(PDO::FETCH_ASSOC);
     
@@ -27,7 +27,7 @@ try {
         WHERE instructor_id = ? 
         ORDER BY course_code
     ");
-    $stmt->execute([$instructor['staff_id']]);
+    $stmt->execute([$instructor['accounts_id']]);
     $courses = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
     echo json_encode([

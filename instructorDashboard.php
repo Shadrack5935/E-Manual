@@ -1,32 +1,25 @@
 <?php
 session_start();
 require_once 'connection.php';
-// Ensure the user is logged in and is an instructor
-// if (!isset($_SESSION['user']) || $_SESSION['user']['role'] !== 'instructor') {
-//     header("Location: account.php");
-//     exit();
-// }
-$user_id = $_SESSION['user_id'] ?? null;
-$user = null;
-if ($user_id) {
-        $stmt = $pdo->prepare("SELECT * FROM accounts WHERE id = ?");
-        $stmt->execute([$user_id]);
-        $user = $stmt->fetch(PDO::FETCH_ASSOC);
-    // try {
-    //     $stmt = $pdo->prepare("SELECT * FROM accounts WHERE id = ?");
-    //     $stmt->execute([$user_id]);
-    //     $user = $stmt->fetch(PDO::FETCH_ASSOC);
 
-    //     if (!$user || !isset($_SESSION['logged_in']) || $_SESSION['logged_in'] !== true) {
-    //         session_destroy();
-    //         header("Location: account.php");
-    //         exit();
-    //     }
-    // } catch(PDOException $e) {
-    //     error_log("Database error in dashboard: " . $e->getMessage());
-    //     die("Something went wrong. Please try again later.");
-    // }
+// Check if user is logged in
+if (!isset($_SESSION['user_id'])) {
+    header("Location: account.php");
+    exit();
 }
+
+// Get user data
+$user_id = $_SESSION['user_id'];
+$stmt = $pdo->prepare("SELECT * FROM accounts WHERE accounts_id = ?");
+$stmt->execute([$user_id]);
+$user = $stmt->fetch(PDO::FETCH_ASSOC);
+
+if (!$user) {
+    session_destroy();
+    header("Location: account.php");
+    exit();
+}
+
 function getUserInitials($fullName) {
     if (empty($fullName)) return 'U';
     $words = explode(' ', trim($fullName));
@@ -36,18 +29,17 @@ function getUserInitials($fullName) {
     return strtoupper(substr($fullName, 0, 2));
 }
 
-// Get user data properly from the fetched $user array
-$full_name = ($user['first_name'] ?? '') . ' ' . ($user['last_name'] ?? '');
-if (trim($full_name) === '') {
-    $full_name = $user['fullname'] ?? 'Instructor';
-}
+// Get user data
+$full_name = ($user['sur_name'] ?? '') . ' ' . ($user['other_name'] ?? '');
 $initials = getUserInitials($full_name);
-$username = $user['username'] ?? '';
-$staff_id = $user['staff_id'] ?? '00000';
-$first_name = $user['first_name'] ?? '';
-$last_name = $user['last_name'] ?? '';
+$username = $user['email'] ?? '';
 $email = $user['email'] ?? '';
 $phone = $user['phone'] ?? '';
+
+// Get stats for dashboard
+$students_count = $pdo->query("SELECT COUNT(*) FROM accounts WHERE role = 'student'")->fetchColumn();
+$courses_count = $pdo->query("SELECT COUNT(*) FROM courses WHERE instructor_id = '$user_id'")->fetchColumn();
+$tasks_count = $pdo->query("SELECT COUNT(*) FROM tasks WHERE instructor_id = '$user_id'")->fetchColumn();
 
 ?>
 <!DOCTYPE html>
@@ -55,7 +47,7 @@ $phone = $user['phone'] ?? '';
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CodeLab - Dashboard</title>
+    <title>E-MANUAL - Dashboard</title>
     <link rel="stylesheet" href="dasboard.css">
     <style>
         .form-container {
@@ -157,6 +149,114 @@ $phone = $user['phone'] ?? '';
             margin-top: 2rem;
         }
 
+        /* Page sections */
+        .page-section {
+            display: none;
+        }
+        .page-section.active {
+            display: block;
+        }
+
+        /* Profile styles */
+        .profile-section {
+            padding: 2rem;
+        }
+        .profile-header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 2rem;
+            gap: 1.5rem;
+        }
+        .profile-avatar-large {
+            width: 80px;
+            height: 80px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2rem;
+            font-weight: bold;
+        }
+        .profile-info h1 {
+            margin: 0;
+            font-size: 1.8rem;
+            color: #333;
+        }
+        .profile-info p {
+            margin: 0.5rem 0 0;
+            color: #666;
+        }
+        .edit-profile-btn {
+            margin-left: auto;
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 0.75rem 1.5rem;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background 0.3s ease;
+        }
+        .edit-profile-btn:hover {
+            background: #5a6ec7;
+        }
+        .profile-details {
+            background: white;
+            border-radius: 12px;
+            padding: 2rem;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+        }
+        .detail-group {
+            margin-bottom: 2rem;
+        }
+        .detail-group h3 {
+            color: #333;
+            margin-bottom: 1.5rem;
+            font-size: 1.3rem;
+            border-bottom: 2px solid #f0f0f0;
+            padding-bottom: 0.75rem;
+        }
+        .detail-item {
+            display: flex;
+            margin-bottom: 1rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid #f5f5f5;
+        }
+        .detail-label {
+            font-weight: 500;
+            color: #555;
+            width: 150px;
+        }
+        .detail-value {
+            color: #333;
+            flex: 1;
+        }
+
+        /* Dashboard stats */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1.5rem;
+            margin-top: 2rem;
+        }
+        .stat-card {
+            background: white;
+            border-radius: 12px;
+            padding: 1.5rem;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+        .stat-number {
+            font-size: 2.5rem;
+            font-weight: bold;
+            color: #667eea;
+            margin-bottom: 0.5rem;
+        }
+        .stat-label {
+            color: #666;
+            font-size: 1rem;
+        }
     </style>
 </head>
 <body>
@@ -168,7 +268,7 @@ $phone = $user['phone'] ?? '';
                     <span></span>
                     <span></span>
                 </div>
-                <div class="logo">CodeLab</div>
+                <div class="logo">E-MANUAL</div>
             </div>
             <div class="user-menu">
                 <span>Welcome back,<?= htmlspecialchars($full_name) ?></span>
@@ -184,31 +284,31 @@ $phone = $user['phone'] ?? '';
         <nav class="sidebar" id="sidebar">
             <ul class="sidebar-menu">
                 <li class="sidebar-item">
-                    <a href="#" class="sidebar-link active" onclick="showPage('profile')">
+                    <a href="#profile" class="sidebar-link" onclick="showPage('profile', event)">
                         <span class="sidebar-icon">👤</span>
                         My Profile
                     </a>
                 </li>
                 <li class="sidebar-item">
-                    <a href="#" class="sidebar-link" onclick="showPage('dashboard')">
+                    <a href="#dashboard" class="sidebar-link" onclick="showPage('dashboard', event)">
                         <span class="sidebar-icon">📊</span>
                         Dashboard
                     </a>
                 </li>
                 <li class="sidebar-item">
-                    <a href="addtopic.php" class="sidebar-link" onclick="showPage('add-topic')">
+                    <a href="addTopic.php" class="sidebar-link">
                         <span class="sidebar-icon">➕</span>
-                        Add Topic Task
+                        Add Topic
                     </a>
                 </li>
                 <li class="sidebar-item">
-                    <a href="addTask.php" class="sidebar-link" onclick="showPage('add-task')">
+                    <a href="addTask.php" class="sidebar-link">
                         <span class="sidebar-icon">📚</span>
                         Add Task
                     </a>
                 </li>
                 <li class="sidebar-item">
-                    <a href="grade.php" class="sidebar-link" onclick="showPage('add-task')">
+                    <a href="grade.php" class="sidebar-link">
                         <span class="sidebar-icon">📈</span>
                         Grade
                     </a>
@@ -216,15 +316,16 @@ $phone = $user['phone'] ?? '';
             </ul>
         </nav>
 
-        <main class="content-area">
-            <!-- Profile Page (Default) -->
-             <div id="profile" class="page-section active">
+       <main class="content-area">
+            <!-- Profile Page -->
+            <div id="profile" class="page-section active">
                 <div class="section-card">
                     <div class="profile-section">
                         <div class="profile-header">
                             <div class="profile-avatar-large"><?= htmlspecialchars($initials) ?></div>
                             <div class="profile-info">
                                 <h1><?= htmlspecialchars($full_name) ?></h1>
+                                <p><?= htmlspecialchars($user['role']) ?></p>
                             </div>
                             <button class="edit-profile-btn" onclick="editProfile()">Edit Profile</button>
                         </div>
@@ -232,18 +333,6 @@ $phone = $user['phone'] ?? '';
                         <div class="profile-details">
                             <div class="detail-group">
                                 <h3>Personal Information</h3>
-                                <div class="detail-item">
-                                    <span class="detail-label">Staff Id</span>
-                                    <span class="detail-value"><?= htmlspecialchars($staff_id) ?></span>
-                                </div>
-                                <div class="detail-item">
-                                    <span class="detail-label">First Name</span>
-                                    <span class="detail-value"><?= htmlspecialchars($first_name) ?></span>
-                                </div>
-                                <div class="detail-item">
-                                    <span class="detail-label">Last Name</span>
-                                    <span class="detail-value"><?= htmlspecialchars($last_name) ?></span>
-                                </div>
                                 <div class="detail-item">
                                     <span class="detail-label">Email</span>
                                     <span class="detail-value"><?= htmlspecialchars($email) ?></span>
@@ -257,191 +346,139 @@ $phone = $user['phone'] ?? '';
                     </div>
                 </div>
             </div>
+
             <!-- Dashboard Page -->
             <div id="dashboard" class="page-section">
                 <div class="section-card">
-                    <h2 class="section-title">📊 Admin Dashboard</h2>
+                    <h2 class="section-title">📊 Instructor Dashboard</h2>
                     <div class="stats-grid">
                         <div class="stat-card">
-                            <div class="stat-number">0</div>
+                            <div class="stat-number"><?= htmlspecialchars($students_count) ?></div>
                             <div class="stat-label">Total Students</div>
                         </div>
                         <div class="stat-card">
-                            <div class="stat-number">0</div>
-                            <div class="stat-label">Total Instructors</div>
+                            <div class="stat-number"><?= htmlspecialchars($courses_count) ?></div>
+                            <div class="stat-label">Your Courses</div>
                         </div>
                         <div class="stat-card">
-                            <div class="stat-number">0</div>
-                            <div class="stat-label">Total Courses</div>
+                            <div class="stat-number"><?= htmlspecialchars($tasks_count) ?></div>
+                            <div class="stat-label">Tasks Assigned</div>
                         </div>
-                    </div>
-                </div>
-            </div>
-            <div id="add-topic" class="page-section ">
-                <div class="form-container">
-                    <div class="section-card">
-                        <h2 class="section-title">➕ Add New Task Topic</h2>
-                        
-                        <form id="addTopicForm">
-                            <div class="form-section">
-                                <h3>📝 Basic Information</h3>
-                                
-                                <div class="form-row">
-                                    <div class="form-group">
-                                        <label for="topicTitle">Topic Title *</label>
-                                        <input type="text" id="topicTitle" name="topicTitle" required placeholder="Enter topic title">
-                                    </div>
-                                    <div class="form-group">
-                                        <label for="topicCode">Topic Code *</label>
-                                        <input type="text" id="topicCode" name="topicCode" required placeholder="e.g., HTML01, CSS02">
-                                    </div>
-                                    <div class="form-group">
-                                        <label for="topicCode">Course Code *</label>
-                                        <input type="text" id="topicCode" name="topicCode" required placeholder="e.g., BCT3001">
-                                    </div>
-                                </div>
-                                
-                                <div class="form-group">
-                                    <label for="topicDescription">Topic Description *</label>
-                                    <textarea id="topicDescription" name="topicDescription" required placeholder="Provide a detailed description of the topic..."></textarea>
-                                </div>
-                                
-                                <div class="form-row">
-                                    <div class="form-group">
-                                        <label for="category">Program *</label>
-                                        <select id="category" name="category" required>
-                                           <option value="">Select Program</option>
-                                            <option value="Computer Science">Computer Science</option>
-                                            <option value="Information Technology">Information Technology</option>
-                                            <option value="Software Engineering">Software Engineering</option>
-                                            <option value="Data Science">Data Science</option>
-                                        </select>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="form-actions">
-                                <button type="submit" class="btn-primary">Create Task Topic</button>
-                            </div>
-                        </form>
                     </div>
                 </div>
             </div>
         </main>       
     </div>
-        <script>
-        // Navigation functions
-        function showPage(pageId) {
-            // Hide all pages
-            document.querySelectorAll('.page-section').forEach(page => {
-                page.classList.remove('active');
-            });
-            
-            // Show selected page
-            document.getElementById(pageId).classList.add('active');
-            
-            // Update active sidebar link
-            document.querySelectorAll('.sidebar-link').forEach(link => {
-                link.classList.remove('active');
-            });
-            event.target.closest('.sidebar-link').classList.add('active');
-            
-            // Close sidebar on mobile
-            if (window.innerWidth <= 768) {
-                closeSidebar();
+
+<script>
+    // Make functions available immediately
+    window.showPage = function(pageId, event = null) {
+        if (event) {
+            event.preventDefault();
+            event.stopPropagation();
+        }
+
+        // Validate page exists
+        if (!document.getElementById(pageId)) {
+            console.error('Page not found:', pageId);
+            return;
+        }
+
+        // Hide all pages
+        document.querySelectorAll('.page-section').forEach(page => {
+            page.classList.remove('active');
+        });
+
+        // Show selected page
+        document.getElementById(pageId).classList.add('active');
+
+        // Update active link
+        document.querySelectorAll('.sidebar-link').forEach(link => {
+            link.classList.remove('active');
+            if (link.getAttribute('href').includes(pageId)) {
+                link.classList.add('active');
             }
+        });
+
+        // Close sidebar on mobile
+        if (window.innerWidth <= 768) {
+            closeSidebar();
+        }
+    };
+
+    window.toggleSidebar = function() {
+        document.getElementById('sidebar').classList.toggle('open');
+        document.querySelector('.overlay').classList.toggle('active');
+        document.body.classList.toggle('no-scroll');
+    };
+
+    window.closeSidebar = function() {
+        document.getElementById('sidebar').classList.remove('open');
+        document.querySelector('.overlay').classList.remove('active');
+        document.body.classList.remove('no-scroll');
+    };
+
+    window.logout = function() {
+        if (confirm('Are you sure you want to logout?')) {
+            window.location.href = 'logout.php';
+        }
+    };
+
+    // Initialize the dashboard
+    document.addEventListener('DOMContentLoaded', function() {
+        // Set active page based on URL hash
+        const hash = window.location.hash.substring(1);
+        if (hash && document.getElementById(hash)) {
+            showPage(hash);
         }
 
-        function toggleSidebar() {
-            const sidebar = document.getElementById('sidebar');
-            const overlay = document.querySelector('.overlay');
-            
-            sidebar.classList.toggle('open');
-            overlay.classList.toggle('active');
+        // Welcome notification
+        setTimeout(() => {
+            showNotification('Welcome back, <?= htmlspecialchars($full_name) ?>!', 'success');
+        }, 500);
+    });
+
+    // Notification system
+    function showNotification(message, type = 'info') {
+        const existingNotification = document.querySelector('.notification');
+        if (existingNotification) {
+            existingNotification.remove();
         }
 
-        function closeSidebar() {
-            const sidebar = document.getElementById('sidebar');
-            const overlay = document.querySelector('.overlay');
-            
-            sidebar.classList.remove('open');
-            overlay.classList.remove('active');
-        }
-
-        function editProfile() {
-            showNotification('Opening profile editor...', 'info');
-            // This would open a profile editing modal or navigate to edit page
-        }
-
-        function logout() {
-            if (confirm('Are you sure you want to logout?')) {
-                showNotification('Logging out...', 'info');
-                setTimeout(() => {
-                    window.location.href = 'logout.php';
-                }, 1000);
-            }
-        }
-
-        // Notification system
-        function showNotification(message, type = 'info') {
-            const existingNotification = document.querySelector('.notification');
-            if (existingNotification) {
-                existingNotification.remove();
-            }
-
-            const notification = document.createElement('div');
-            notification.className = `notification notification-${type}`;
-            notification.innerHTML = `
-                <div style="
-                    position: fixed;
-                    top: 100px;
-                    right: 20px;
-                    background: ${type === 'success' ? '#4CAF50' : type === 'error' ? '#f44336' : '#2196F3'};
-                    color: white;
-                    padding: 1rem 1.5rem;
-                    border-radius: 8px;
-                    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-                    z-index: 1000;
-                    animation: slideIn 0.3s ease;
-                ">
-                    ${message}
-                </div>
-                <style>
-                    @keyframes slideIn {
-                        from { transform: translateX(100%); opacity: 0; }
-                        to { transform: translateX(0); opacity: 1; }
-                    }
-                </style>
-            `;
-            
-            document.body.appendChild(notification);
-            
-            setTimeout(() => {
-                if (notification.parentNode) {
-                    notification.style.animation = 'slideIn 0.3s ease reverse';
-                    setTimeout(() => notification.remove(), 300);
+        const notification = document.createElement('div');
+        notification.className = `notification notification-${type}`;
+        notification.innerHTML = `
+            <div style="
+                position: fixed;
+                top: 100px;
+                right: 20px;
+                background: ${type === 'success' ? '#4CAF50' : type === 'error' ? '#f44336' : '#2196F3'};
+                color: white;
+                padding: 1rem 1.5rem;
+                border-radius: 8px;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+                z-index: 1000;
+                animation: slideIn 0.3s ease;
+            ">
+                ${message}
+            </div>
+            <style>
+                @keyframes slideIn {
+                    from { transform: translateX(100%); opacity: 0; }
+                    to { transform: translateX(0); opacity: 1; }
                 }
-            }, 3000);
-        }
-
-        // Close sidebar when clicking outside on mobile
-        document.addEventListener('click', function(e) {
-            const sidebar = document.getElementById('sidebar');
-            const hamburger = document.querySelector('.hamburger');
-            
-            if (window.innerWidth <= 768 && 
-                !sidebar.contains(e.target) && 
-                !hamburger.contains(e.target) &&
-                sidebar.classList.contains('open')) {
-                closeSidebar();
+            </style>
+        `;
+        
+        document.body.appendChild(notification);
+        
+        setTimeout(() => {
+            if (notification.parentNode) {
+                notification.style.animation = 'slideIn 0.3s ease reverse';
+                setTimeout(() => notification.remove(), 300);
             }
-        });
-
-        // Welcome animation
-        document.addEventListener('DOMContentLoaded', function() {
-            setTimeout(() => {
-                showNotification('Admin,Welcome to your profile! 👋', 'success');
-            }, 500);
-        });
-    </script>
+        }, 3000);
+    }
+</script>
 </body>
 </html>

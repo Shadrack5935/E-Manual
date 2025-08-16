@@ -1,27 +1,77 @@
 <?php
 session_start();
 require_once 'connection.php';
-$user_id = $_SESSION['user_id'] ?? null;
-$user = null;
-if ($user_id) {
-        $stmt = $pdo->prepare("SELECT * FROM accounts WHERE id = ?");
-        $stmt->execute([$user_id]);
-        $user = $stmt->fetch(PDO::FETCH_ASSOC);
-    // try {
-    //     $stmt = $pdo->prepare("SELECT * FROM accounts WHERE id = ?");
-    //     $stmt->execute([$user_id]);
-    //     $user = $stmt->fetch(PDO::FETCH_ASSOC);
 
-    //     if (!$user || !isset($_SESSION['logged_in']) || $_SESSION['logged_in'] !== true) {
-    //         session_destroy();
-    //         header("Location: account.php");
-    //         exit();
-    //     }
-    // } catch(PDOException $e) {
-    //     error_log("Database error in dashboard: " . $e->getMessage());
-    //     die("Something went wrong. Please try again later.");
-    // }
+// Verify user is logged in and is an instructor
+// if (!isset($_SESSION['user_id']) || $_SESSION['user']['role'] !== 'instructor') {
+//     header("Location: account.php");
+//     exit();
+// }
+
+$user_id = $_SESSION['user_id'];
+$user = null;
+
+try {
+    // Get user data
+    $stmt = $pdo->prepare("SELECT * FROM accounts WHERE accounts_id = ?");
+    $stmt->execute([$user_id]);
+    $user = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    if (!$user) {
+        session_destroy();
+        header("Location: account.php");
+        exit();
+    }
+
+    // Get submissions to grade
+    $stmt = $pdo->prepare("
+        SELECT 
+            s.id,
+            t.task_title,
+            tp.topic_code,
+            tp.topic_title,
+            a.accounts_id AS student_id,
+            a.sur_name,
+            a.other_name,
+            st.program,
+            s.submitted_at,
+            s.status,
+            s.grade,
+            s.letter_grade,
+            s.feedback,
+            s.submission_text,
+            t.max_marks
+        FROM submissions s
+        JOIN tasks t ON s.task_id = t.id
+        JOIN topics tp ON t.topic_code = tp.topic_code
+        JOIN accounts a ON s.student_id = a.accounts_id
+        JOIN students st ON a.accounts_id = st.accounts_id
+        WHERE t.instructor_id = ?
+        ORDER BY s.submitted_at DESC
+    ");
+    $stmt->execute([$user_id]);
+    $submissions = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // Get statistics
+    $stats = $pdo->prepare("
+        SELECT 
+            COUNT(*) AS total,
+            SUM(CASE WHEN s.status = 'pending' THEN 1 ELSE 0 END) AS pending,
+            SUM(CASE WHEN s.status = 'graded' THEN 1 ELSE 0 END) AS graded,
+            AVG(s.grade) AS average_grade
+        FROM submissions s
+        JOIN tasks t ON s.task_id = t.id
+        WHERE t.instructor_id = ?
+    ");
+    $stats->execute([$user_id]);
+    $statsData = $stats->fetch(PDO::FETCH_ASSOC);
+
+} catch (PDOException $e) {
+    error_log("Database error in grade.php: " . $e->getMessage());
+    $submissions = [];
+    $statsData = [];
 }
+
 function getUserInitials($fullName) {
     if (empty($fullName)) return 'U';
     $words = explode(' ', trim($fullName));
@@ -31,18 +81,9 @@ function getUserInitials($fullName) {
     return strtoupper(substr($fullName, 0, 2));
 }
 
-// Get user data properly from the fetched $user array
-$full_name = ($user['first_name'] ?? '') . ' ' . ($user['last_name'] ?? '');
-if (trim($full_name) === '') {
-    $full_name = $user['fullname'] ?? 'Instructor';
-}
+// Get user data for display
+$full_name = ($user['sur_name'] ?? '') . ' ' . ($user['other_name'] ?? '');
 $initials = getUserInitials($full_name);
-$username = $user['username'] ?? '';
-$staff_id = $user['staff_id'] ?? '00000';
-$first_name = $user['first_name'] ?? '';
-$last_name = $user['last_name'] ?? '';
-$email = $user['email'] ?? '';
-$phone = $user['phone'] ?? '';
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -52,328 +93,7 @@ $phone = $user['phone'] ?? '';
     <title>CodeLab - Grade Tasks</title>
     <link rel="stylesheet" href="dasboard.css">
     <style>
-        .form-container {
-            max-width: 1200px;
-            margin: 0 auto;
-        }
-
-        .form-section {
-            background: white;
-            border-radius: 12px;
-            padding: 2rem;
-            margin-bottom: 2rem;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
-        }
-
-        .form-section h3 {
-            color: #333;
-            margin-bottom: 1.5rem;
-            font-size: 1.3rem;
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-        }
-
-        .form-group {
-            margin-bottom: 1.5rem;
-        }
-
-        .form-group label {
-            display: block;
-            margin-bottom: 0.5rem;
-            font-weight: 500;
-            color: #555;
-        }
-
-        .form-group input,
-        .form-group select,
-        .form-group textarea {
-            width: 100%;
-            padding: 0.75rem;
-            border: 2px solid #e1e5e9;
-            border-radius: 8px;
-            font-size: 1rem;
-            transition: border-color 0.3s ease;
-        }
-
-        .form-group input:focus,
-        .form-group select:focus,
-        .form-group textarea:focus {
-            outline: none;
-            border-color: #667eea;
-        }
-
-        .form-group textarea {
-            resize: vertical;
-            min-height: 120px;
-        }
-
-        .form-row {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 1.5rem;
-        }
-
-        .btn-primary {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            border: none;
-            padding: 1rem 2rem;
-            border-radius: 8px;
-            font-size: 1rem;
-            cursor: pointer;
-            transition: transform 0.3s ease;
-        }
-
-        .btn-primary:hover {
-            transform: translateY(-2px);
-        }
-
-        .btn-secondary {
-            background: #6c757d;
-            color: white;
-            border: none;
-            padding: 1rem 2rem;
-            border-radius: 8px;
-            font-size: 1rem;
-            cursor: pointer;
-            margin-right: 1rem;
-        }
-
-        .btn-secondary:hover {
-            background: #5a6268;
-        }
-
-        .btn-success {
-            background: #28a745;
-            color: white;
-            border: none;
-            padding: 0.5rem 1rem;
-            border-radius: 6px;
-            font-size: 0.9rem;
-            cursor: pointer;
-            transition: background-color 0.3s ease;
-        }
-
-        .btn-success:hover {
-            background: #218838;
-        }
-
-        .btn-danger {
-            background: #dc3545;
-            color: white;
-            border: none;
-            padding: 0.5rem 1rem;
-            border-radius: 6px;
-            font-size: 0.9rem;
-            cursor: pointer;
-            transition: background-color 0.3s ease;
-        }
-
-        .btn-danger:hover {
-            background: #c82333;
-        }
-
-        .form-actions {
-            display: flex;
-            gap: 1rem;
-            justify-content: flex-end;
-            margin-top: 2rem;
-        }
-
-        .submissions-table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 1rem;
-        }
-
-        .submissions-table th,
-        .submissions-table td {
-            padding: 1rem;
-            text-align: left;
-            border-bottom: 1px solid #e1e5e9;
-        }
-
-        .submissions-table th {
-            background: #f8f9fa;
-            font-weight: 600;
-            color: #333;
-        }
-
-        .submissions-table tr:hover {
-            background: #f8f9fa;
-        }
-
-        .status-badge {
-            padding: 0.25rem 0.75rem;
-            border-radius: 20px;
-            font-size: 0.8rem;
-            font-weight: 500;
-            text-transform: uppercase;
-        }
-
-        .status-pending {
-            background: #fff3cd;
-            color: #856404;
-        }
-
-        .status-graded {
-            background: #d4edda;
-            color: #155724;
-        }
-
-        .status-late {
-            background: #f8d7da;
-            color: #721c24;
-        }
-
-        .search-filter {
-            display: flex;
-            gap: 1rem;
-            margin-bottom: 1.5rem;
-            flex-wrap: wrap;
-            align-items: center;
-        }
-
-        .search-filter input,
-        .search-filter select {
-            padding: 0.5rem;
-            border: 2px solid #e1e5e9;
-            border-radius: 6px;
-            font-size: 0.9rem;
-        }
-
-        .search-filter input {
-            flex: 1;
-            min-width: 200px;
-        }
-
-        .grade-modal {
-            display: none;
-            position: fixed;
-            z-index: 1000;
-            left: 0;
-            top: 0;
-            width: 100%;
-            height: 100%;
-            background-color: rgba(0,0,0,0.5);
-        }
-
-        .grade-modal-content {
-            background-color: white;
-            margin: 5% auto;
-            padding: 2rem;
-            border-radius: 12px;
-            width: 90%;
-            max-width: 800px;
-            max-height: 80vh;
-            overflow-y: auto;
-        }
-
-        .grade-modal-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 1.5rem;
-            padding-bottom: 1rem;
-            border-bottom: 1px solid #e1e5e9;
-        }
-
-        .close-modal {
-            background: none;
-            border: none;
-            font-size: 1.5rem;
-            cursor: pointer;
-            color: #666;
-        }
-
-        .close-modal:hover {
-            color: #000;
-        }
-
-        .submission-details {
-            margin-bottom: 1.5rem;
-        }
-
-        .submission-details h4 {
-            margin-bottom: 0.5rem;
-            color: #333;
-        }
-
-        .submission-details p {
-            margin-bottom: 0.5rem;
-            color: #666;
-        }
-
-        .code-preview {
-            background: #f8f9fa;
-            border: 1px solid #e1e5e9;
-            border-radius: 8px;
-            padding: 1rem;
-            margin: 1rem 0;
-            font-family: 'Courier New', monospace;
-            white-space: pre-wrap;
-            max-height: 300px;
-            overflow-y: auto;
-        }
-
-        .grade-form {
-            display: grid;
-            gap: 1rem;
-        }
-
-        .grade-input {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 1rem;
-        }
-
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 1.5rem;
-            margin-bottom: 2rem;
-        }
-
-        .stat-card {
-            background: white;
-            padding: 1.5rem;
-            border-radius: 12px;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
-            text-align: center;
-        }
-
-        .stat-number {
-            font-size: 2rem;
-            font-weight: bold;
-            color: #667eea;
-            margin-bottom: 0.5rem;
-        }
-
-        .stat-label {
-            color: #666;
-            font-size: 0.9rem;
-        }
-
-        @media (max-width: 768px) {
-            .form-row {
-                grid-template-columns: 1fr;
-            }
-            
-            .search-filter {
-                flex-direction: column;
-                align-items: stretch;
-            }
-            
-            .submissions-table {
-                font-size: 0.9rem;
-            }
-            
-            .grade-modal-content {
-                margin: 2% auto;
-                width: 95%;
-            }
-        }
+        /* (Keep all your existing CSS styles) */
     </style>
 </head>
 <body>
@@ -385,10 +105,10 @@ $phone = $user['phone'] ?? '';
                     <span></span>
                     <span></span>
                 </div>
-                <div class="logo">E-MANUAL</div>
+                <div class="logo">CodeLab</div>
             </div>
             <div class="user-menu">
-                <span>Welcome back,<?= htmlspecialchars($first_name) ?></span>
+                <span>Welcome back, <?= htmlspecialchars($user['other_name'] ?? 'Instructor') ?></span>
                 <div class="user-avatar"><?= htmlspecialchars($initials) ?></div>
                 <button onclick="logout()" class="logout-btn">Logout</button>
             </div>
@@ -401,31 +121,31 @@ $phone = $user['phone'] ?? '';
         <nav class="sidebar" id="sidebar">
             <ul class="sidebar-menu">
                 <li class="sidebar-item">
-                    <a href="instructorDashboard.php" class="sidebar-link" onclick="showPage('profile')">
+                    <a href="instructorDashboard.php" class="sidebar-link">
                         <span class="sidebar-icon">👤</span>
                         My Profile
                     </a>
                 </li>
                 <li class="sidebar-item">
-                    <a href="instructorDashboard.php" class="sidebar-link" onclick="showPage('dashboard')">
+                    <a href="instructorDashboard.php?page=dashboard" class="sidebar-link"  onclick="showPage('dashboard', event)">
                         <span class="sidebar-icon">📊</span>
                         Dashboard
                     </a>
                 </li>
                 <li class="sidebar-item">
-                    <a href="addtopic.php" class="sidebar-link" onclick="showPage('add-topic')">
+                    <a href="addtopic.php" class="sidebar-link">
                         <span class="sidebar-icon">➕</span>
-                        Add Topic Task
+                        Add Topic
                     </a>
                 </li>
                 <li class="sidebar-item">
-                    <a href="addTask.php" class="sidebar-link" onclick="showPage('add-task')">
+                    <a href="addTask.php" class="sidebar-link">
                         <span class="sidebar-icon">📚</span>
                         Add Task
                     </a>
                 </li>
                 <li class="sidebar-item">
-                    <a href="#" class="sidebar-link active" onclick="showPage('grade')">
+                    <a href="grade.php" class="sidebar-link active">
                         <span class="sidebar-icon">📈</span>
                         Grade
                     </a>
@@ -434,7 +154,6 @@ $phone = $user['phone'] ?? '';
         </nav>
 
         <main class="content-area">
-            <!-- Grade Page -->
             <div id="grade" class="page-section active">
                 <div class="form-container">
                     <div class="section-card">
@@ -443,19 +162,19 @@ $phone = $user['phone'] ?? '';
                         <!-- Statistics Overview -->
                         <div class="stats-grid">
                             <div class="stat-card">
-                                <div class="stat-number" id="totalSubmissions">12</div>
+                                <div class="stat-number" id="totalSubmissions"><?= $statsData['total'] ?? 0 ?></div>
                                 <div class="stat-label">Total Submissions</div>
                             </div>
                             <div class="stat-card">
-                                <div class="stat-number" id="pendingGrades">8</div>
+                                <div class="stat-number" id="pendingGrades"><?= $statsData['pending'] ?? 0 ?></div>
                                 <div class="stat-label">Pending Grades</div>
                             </div>
                             <div class="stat-card">
-                                <div class="stat-number" id="gradedSubmissions">4</div>
+                                <div class="stat-number" id="gradedSubmissions"><?= $statsData['graded'] ?? 0 ?></div>
                                 <div class="stat-label">Graded</div>
                             </div>
                             <div class="stat-card">
-                                <div class="stat-number" id="averageGrade">85%</div>
+                                <div class="stat-number" id="averageGrade"><?= round($statsData['average_grade'] ?? 0) ?>%</div>
                                 <div class="stat-label">Average Grade</div>
                             </div>
                         </div>
@@ -467,10 +186,19 @@ $phone = $user['phone'] ?? '';
                                 <input type="text" id="searchStudent" placeholder="Search by student name or ID..." onkeyup="filterSubmissions()">
                                 <select id="filterTopic" onchange="filterSubmissions()">
                                     <option value="">All Topics</option>
-                                    <option value="HTML01">HTML Basics (HTML01)</option>
-                                    <option value="CSS02">CSS Styling (CSS02)</option>
-                                    <option value="JS03">JavaScript Fundamentals (JS03)</option>
-                                    <option value="PHP04">PHP Backend (PHP04)</option>
+                                    <?php
+                                    // Get unique topics
+                                    $topics = [];
+                                    foreach ($submissions as $sub) {
+                                        $key = $sub['topic_code'];
+                                        if (!isset($topics[$key])) {
+                                            $topics[$key] = $sub['topic_title'];
+                                        }
+                                    }
+                                    foreach ($topics as $code => $title) {
+                                        echo '<option value="'.htmlspecialchars($code).'">'.htmlspecialchars("$title ($code)").'</option>';
+                                    }
+                                    ?>
                                 </select>
                                 <select id="filterStatus" onchange="filterSubmissions()">
                                     <option value="">All Status</option>
@@ -480,9 +208,16 @@ $phone = $user['phone'] ?? '';
                                 </select>
                                 <select id="filterProgram" onchange="filterSubmissions()">
                                     <option value="">All Programs</option>
-                                    <option value="Computer Science">Computer Science</option>
-                                    <option value="Information Technology">Information Technology</option>
-                                    <option value="Software Engineering">Software Engineering</option>
+                                    <?php
+                                    // Get unique programs
+                                    $programs = [];
+                                    foreach ($submissions as $sub) {
+                                        if (!in_array($sub['program'], $programs)) {
+                                            $programs[] = $sub['program'];
+                                            echo '<option value="'.htmlspecialchars($sub['program']).'">'.htmlspecialchars($sub['program']).'</option>';
+                                        }
+                                    }
+                                    ?>
                                 </select>
                             </div>
                         </div>
@@ -496,6 +231,7 @@ $phone = $user['phone'] ?? '';
                                         <tr>
                                             <th>Student</th>
                                             <th>Student ID</th>
+                                            <th>Task</th>
                                             <th>Topic</th>
                                             <th>Program</th>
                                             <th>Submitted</th>
@@ -505,7 +241,23 @@ $phone = $user['phone'] ?? '';
                                         </tr>
                                     </thead>
                                     <tbody id="submissionsBody">
-                                        <!-- Sample data will be populated here -->
+                                        <?php foreach ($submissions as $sub): ?>
+                                        <tr data-id="<?= $sub['id'] ?>">
+                                            <td><?= htmlspecialchars($sub['sur_name'] . ' ' . $sub['other_name']) ?></td>
+                                            <td><?= htmlspecialchars($sub['student_id']) ?></td>
+                                            <td><?= htmlspecialchars($sub['task_title']) ?></td>
+                                            <td><?= htmlspecialchars($sub['topic_title'] . ' (' . $sub['topic_code'] . ')') ?></td>
+                                            <td><?= htmlspecialchars($sub['program']) ?></td>
+                                            <td><?= date('M j, Y g:i a', strtotime($sub['submitted_at'])) ?></td>
+                                            <td><span class="status-badge status-<?= $sub['status'] ?>"><?= $sub['status'] ?></span></td>
+                                            <td><?= $sub['grade'] ? $sub['grade'] . '%' : '-' ?></td>
+                                            <td>
+                                                <button class="btn-success" onclick="openGradeModal(<?= $sub['id'] ?>)">
+                                                    <?= $sub['status'] === 'graded' ? 'View/Edit' : 'Grade' ?>
+                                                </button>
+                                            </td>
+                                        </tr>
+                                        <?php endforeach; ?>
                                     </tbody>
                                 </table>
                             </div>
@@ -525,18 +277,19 @@ $phone = $user['phone'] ?? '';
             </div>
             
             <div class="submission-details" id="submissionDetails">
-                <!-- Submission details will be populated here -->
+                <!-- Will be populated by JavaScript -->
             </div>
             
             <div class="code-preview" id="codePreview">
-                <!-- Code preview will be shown here -->
+                <!-- Will be populated by JavaScript -->
             </div>
             
             <form class="grade-form" id="gradeForm">
+                <input type="hidden" id="submissionId">
                 <div class="grade-input">
                     <div class="form-group">
-                        <label for="gradeScore">Grade (0-100)</label>
-                        <input type="number" id="gradeScore" min="0" max="100" required>
+                        <label for="gradeScore">Grade (0-<?= $sub['max_marks'] ?? 100 ?>)</label>
+                        <input type="number" id="gradeScore" min="0" max="<?= $sub['max_marks'] ?? 100 ?>" required>
                     </div>
                     <div class="form-group">
                         <label for="letterGrade">Letter Grade</label>
@@ -568,75 +321,12 @@ $phone = $user['phone'] ?? '';
     </div>
 
     <script>
-        // Sample data for demonstrations
-        let submissionsData = [];
-        let statsData = {};
-
-        // Initialize page
-        document.addEventListener('DOMContentLoaded', function() {
-            loadSubmissions();
-        });
-        
-        function loadSubmissions() {
-            fetch('get_submissions.php')
-                .then(response => response.json())
-                .then(data => {
-                    if (data.success) {
-                        submissionsData = data.submissions.map(submission => ({
-                            id: submission.id,
-                            studentName: `${submission.first_name} ${submission.last_name}`,
-                            studentId: submission.student_id,
-                            topic: submission.topic_code,
-                            topicTitle: submission.topic_title,
-                            program: submission.program,
-                            submittedDate: submission.submitted_at,
-                            status: submission.status,
-                            grade: submission.grade,
-                            letterGrade: submission.letter_grade,
-                            code: submission.submission_text || 'No code submitted',
-                            feedback: submission.feedback || '',
-                            taskTitle: submission.task_title,
-                            maxMarks: submission.max_marks
-                        }));
-                        
-                        statsData = data.stats;
-                        populateSubmissionsTable();
-                        updateStats();
-                    } else {
-                        showNotification('Error loading submissions: ' + data.error, 'error');
-                    }
-                })
-                .catch(error => {
-                    showNotification('Error loading submissions: ' + error.message, 'error');
-                });
-        }
-
-        function populateSubmissionsTable() {
-            const tbody = document.getElementById('submissionsBody');
-            tbody.innerHTML = '';
-
-            submissionsData.forEach(submission => {
-                const row = document.createElement('tr');
-                row.innerHTML = `
-                    <td>${submission.studentName}</td>
-                    <td>${submission.studentId}</td>
-                    <td>${submission.topicTitle} (${submission.topic})</td>
-                    <td>${submission.program}</td>
-                    <td>${formatDate(submission.submittedDate)}</td>
-                    <td><span class="status-badge status-${submission.status}">${submission.status}</span></td>
-                    <td>${submission.grade ? submission.grade + '%' : '-'}</td>
-                    <td>
-                        <button class="btn-success" onclick="openGradeModal(${submission.id})">
-                            ${submission.status === 'graded' ? 'View/Edit' : 'Grade'}
-                        </button>
-                    </td>
-                `;
-                tbody.appendChild(row);
-            });
-        }
+        // Store submissions data for JavaScript
+        const submissionsData = <?= json_encode($submissions) ?>;
+        const statsData = <?= json_encode($statsData) ?>;
 
         function openGradeModal(submissionId) {
-            const submission = submissionsData.find(s => s.id === submissionId);
+            const submission = submissionsData.find(s => s.id == submissionId);
             if (!submission) return;
 
             const modal = document.getElementById('gradeModal');
@@ -645,30 +335,24 @@ $phone = $user['phone'] ?? '';
             
             // Populate submission details
             details.innerHTML = `
-                <h4>Student: ${submission.studentName} (${submission.studentId})</h4>
-                <p><strong>Topic:</strong> ${submission.topicTitle} (${submission.topic})</p>
+                <h4>Student: ${submission.sur_name} ${submission.other_name} (${submission.student_id})</h4>
+                <p><strong>Task:</strong> ${submission.task_title}</p>
+                <p><strong>Topic:</strong> ${submission.topic_title} (${submission.topic_code})</p>
                 <p><strong>Program:</strong> ${submission.program}</p>
-                <p><strong>Submitted:</strong> ${formatDate(submission.submittedDate)}</p>
+                <p><strong>Submitted:</strong> ${new Date(submission.submitted_at).toLocaleString()}</p>
                 <p><strong>Status:</strong> <span class="status-badge status-${submission.status}">${submission.status}</span></p>
+                <p><strong>Max Marks:</strong> ${submission.max_marks}</p>
             `;
             
             // Show code preview
-            codePreview.textContent = submission.code;
+            codePreview.textContent = submission.submission_text || 'No submission content available';
             
-            // Populate form if already graded
-            if (submission.grade) {
-                document.getElementById('gradeScore').value = submission.grade;
-                document.getElementById('letterGrade').value = submission.letterGrade || '';
-                document.getElementById('feedback').value = submission.feedback || '';
-            } else {
-                // Clear form for new grading
-                document.getElementById('gradeScore').value = '';
-                document.getElementById('letterGrade').value = '';
-                document.getElementById('feedback').value = '';
-            }
-            
-            // Store current submission ID for form submission
-            document.getElementById('gradeForm').dataset.submissionId = submissionId;
+            // Populate form
+            document.getElementById('submissionId').value = submission.id;
+            document.getElementById('gradeScore').value = submission.grade || '';
+            document.getElementById('gradeScore').max = submission.max_marks;
+            document.getElementById('letterGrade').value = submission.letter_grade || '';
+            document.getElementById('feedback').value = submission.feedback || '';
             
             modal.style.display = 'block';
         }
@@ -680,55 +364,53 @@ $phone = $user['phone'] ?? '';
         // Auto-calculate letter grade based on score
         document.getElementById('gradeScore').addEventListener('input', function() {
             const score = parseInt(this.value);
+            const maxMarks = parseInt(this.max);
+            const percentage = (score / maxMarks) * 100;
             const letterGradeSelect = document.getElementById('letterGrade');
             
-            if (score >= 90) letterGradeSelect.value = 'A+';
-            else if (score >= 80) letterGradeSelect.value = 'A';
-            else if (score >= 75) letterGradeSelect.value = 'B+';
-            else if (score >= 70) letterGradeSelect.value = 'B';
-            else if (score >= 65) letterGradeSelect.value = 'C+';
-            else if (score >= 60) letterGradeSelect.value = 'C';
-            else if (score >= 50) letterGradeSelect.value = 'D';
-            else letterGradeSelect.value = 'F';
+            if (percentage >= 90) letterGradeSelect.value = 'A+';
+            else if (percentage >= 80) letterGradeSelect.value = 'A';
+            else if (percentage >= 75) letterGradeSelect.value = 'B+';
+            else if (percentage >= 70) letterGradeSelect.value = 'B';
+            else if (percentage >= 65) letterGradeSelect.value = 'C+';
+            else if (percentage >= 60) letterGradeSelect.value = 'C';
+            else if (percentage >= 50) letterGradeSelect.value = 'D';
+            else if (!isNaN(percentage)) letterGradeSelect.value = 'F';
         });
 
         // Handle grade form submission
         document.getElementById('gradeForm').addEventListener('submit', function(e) {
             e.preventDefault();
             
-            const submissionId = parseInt(this.dataset.submissionId);
-            const score = parseInt(document.getElementById('gradeScore').value);
+            const submissionId = document.getElementById('submissionId').value;
+            const grade = document.getElementById('gradeScore').value;
             const letterGrade = document.getElementById('letterGrade').value;
             const feedback = document.getElementById('feedback').value;
             
             const formData = new FormData();
             formData.append('submission_id', submissionId);
-            formData.append('grade', score);
+            formData.append('grade', grade);
             formData.append('letter_grade', letterGrade);
             formData.append('feedback', feedback);
             
-            fe.tch('save_grade.php', {
+            fetch('save_grade.php', {
                 method: 'POST',
                 body: formData
             })
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
-                    // Update local data
-                    const submission = submissionsData.find(s => s.id === submissionId);
-                    if (submission) {
-                        submission.grade = score;
-                        submission.letterGrade = letterGrade;
-                        submission.feedback = feedback;
-                        submission.status = 'graded';
+                    // Update the table row
+                    const row = document.querySelector(`tr[data-id="${submissionId}"]`);
+                    if (row) {
+                        row.cells[6].innerHTML = `<span class="status-badge status-graded">graded</span>`;
+                        row.cells[7].textContent = `${grade}%`;
                     }
-                    
-                    // Refresh table and stats
-                    populateSubmissionsTable();
-                    updateStats();
                     
                     closeGradeModal();
                     showNotification('Grade saved successfully!', 'success');
+                    // Refresh the page to update stats
+                    setTimeout(() => location.reload(), 1000);
                 } else {
                     showNotification('Error saving grade: ' + data.error, 'error');
                 }
@@ -749,9 +431,9 @@ $phone = $user['phone'] ?? '';
             rows.forEach(row => {
                 const studentName = row.cells[0].textContent.toLowerCase();
                 const studentId = row.cells[1].textContent.toLowerCase();
-                const topic = row.cells[2].textContent;
-                const program = row.cells[3].textContent;
-                const status = row.cells[5].textContent.toLowerCase();
+                const topic = row.cells[3].textContent;
+                const program = row.cells[4].textContent;
+                const status = row.cells[6].textContent.toLowerCase();
                 
                 const matchesSearch = studentName.includes(searchTerm) || studentId.includes(searchTerm);
                 const matchesTopic = !topicFilter || topic.includes(topicFilter);
@@ -762,122 +444,7 @@ $phone = $user['phone'] ?? '';
             });
         }
 
-        function updateStats() {
-            if (statsData) {
-                document.getElementById('totalSubmissions').textContent = statsData.total || 0;
-                document.getElementById('pendingGrades').textContent = statsData.pending || 0;
-                document.getElementById('gradedSubmissions').textContent = statsData.graded || 0;
-                document.getElementById('averageGrade').textContent = (statsData.average_grade || 0) + '%';
-            }
-        }
-
-        function formatDate(dateString) {
-            return new Date(dateString).toLocaleDateString('en-US', {
-                year: 'numeric',
-                month: 'short',
-                day: 'numeric'
-            });
-        }
-
-        // Navigation functions
-        function showPage(pageId) {
-            document.querySelectorAll('.page-section').forEach(page => {
-                page.classList.remove('active');
-            });
-            
-            document.getElementById(pageId).classList.add('active');
-            
-            document.querySelectorAll('.sidebar-link').forEach(link => {
-                link.classList.remove('active');
-            });
-            event.target.closest('.sidebar-link').classList.add('active');
-            
-            if (window.innerWidth <= 768) {
-                closeSidebar();
-            }
-        }
-
-        function toggleSidebar() {
-            const sidebar = document.getElementById('sidebar');
-            const overlay = document.querySelector('.overlay');
-            
-            sidebar.classList.toggle('open');
-            overlay.classList.toggle('active');
-        }
-
-        function closeSidebar() {
-            const sidebar = document.getElementById('sidebar');
-            const overlay = document.querySelector('.overlay');
-            
-            sidebar.classList.remove('open');
-            overlay.classList.remove('active');
-        }
-
-        function logout() {
-            if (confirm('Are you sure you want to logout?')) {
-                showNotification('Logging out...', 'info');
-                setTimeout(() => {
-                    window.location.href = 'logout.php';
-                }, 1000);
-            }
-        }
-
-        // Notification system
-        function showNotification(message, type = 'info') {
-            const existingNotification = document.querySelector('.notification');
-            if (existingNotification) {
-                existingNotification.remove();
-            }
-
-            const notification = document.createElement('div');
-            notification.className = `notification notification-${type}`;
-            notification.innerHTML = `
-                <div style="
-                    position: fixed;
-                    top: 100px;
-                    right: 20px;
-                    background: ${type === 'success' ? '#4CAF50' : type === 'error' ? '#f44336' : '#2196F3'};
-                    color: white;
-                    padding: 1rem 1.5rem;
-                    border-radius: 8px;
-                    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-                    z-index: 1000;
-                    animation: slideIn 0.3s ease;
-                ">
-                    ${message}
-                </div>
-                <style>
-                    @keyframes slideIn {
-                        from { transform: translateX(100%); opacity: 0; }
-                        to { transform: translateX(0); opacity: 1; }
-                    }
-                </style>
-            `;
-            
-            document.body.appendChild(notification);
-            
-            setTimeout(() => {
-                if (notification.parentNode) {
-                    notification.style.animation = 'slideIn 0.3s ease reverse';
-                    setTimeout(() => notification.remove(), 300);
-                }
-            }, 3000);
-        }
-
-        // Close modal when clicking outside
-        window.onclick = function(event) {
-            const modal = document.getElementById('gradeModal');
-            if (event.target === modal) {
-                closeGradeModal();
-            }
-        }
-
-        // Welcome message
-        document.addEventListener('DOMContentLoaded', function() {
-            setTimeout(() => {
-                showNotification('Grade management system loaded! 📝', 'success');
-            }, 500);
-        });
+        // Navigation functions (keep your existing ones)
     </script>
 </body>
 </html>

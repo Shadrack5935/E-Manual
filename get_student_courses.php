@@ -19,7 +19,6 @@ try {
             c.course_code,
             c.course_name,
             c.credits,
-            c.schedule,
             c.description,
             a.fullname as instructor,
             ce.enrolled_at,

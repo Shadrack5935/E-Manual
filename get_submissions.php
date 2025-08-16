@@ -11,15 +11,6 @@ try {
         throw new Exception('User not authenticated');
     }
 
-    // Get instructor's staff_id
-    $stmt = $pdo->prepare("SELECT staff_id FROM accounts WHERE id = ?");
-    $stmt->execute([$instructor_id]);
-    $instructor = $stmt->fetch(PDO::FETCH_ASSOC);
-    
-    if (!$instructor) {
-        throw new Exception('Instructor not found');
-    }
-
     // Get submissions for tasks created by this instructor
     $stmt = $pdo->prepare("
         SELECT 
@@ -27,27 +18,30 @@ try {
             s.task_id,
             s.student_id,
             s.submission_text,
+            s.file_path,
             s.submitted_at,
             s.status,
             s.grade,
             s.letter_grade,
             s.feedback,
+            s.graded_at,
             t.task_title,
             t.topic_code,
             tp.topic_title,
             t.course_code,
             t.max_marks,
-            a.first_name,
-            a.last_name,
-            a.program
+            a.sur_name,
+            a.other_name,
+            st.program
         FROM submissions s
         INNER JOIN tasks t ON s.task_id = t.id
         INNER JOIN topics tp ON t.topic_code = tp.topic_code
-        INNER JOIN accounts a ON s.student_id = a.student_id
+        INNER JOIN accounts a ON s.student_id = a.accounts_id
+        INNER JOIN students st ON s.student_id = st.accounts_id
         WHERE t.instructor_id = ?
         ORDER BY s.submitted_at DESC
     ");
-    $stmt->execute([$instructor['staff_id']]);
+    $stmt->execute([$instructor_id]);
     $submissions = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
     // Get statistics

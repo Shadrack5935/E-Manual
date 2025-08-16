@@ -11,15 +11,6 @@ try {
         throw new Exception('User not authenticated');
     }
 
-    // Get instructor's staff_id
-    $stmt = $pdo->prepare("SELECT staff_id FROM accounts WHERE id = ?");
-    $stmt->execute([$instructor_id]);
-    $instructor = $stmt->fetch(PDO::FETCH_ASSOC);
-    
-    if (!$instructor) {
-        throw new Exception('Instructor not found');
-    }
-
     // Get form data
     $submission_id = $_POST['submission_id'] ?? '';
     $grade = $_POST['grade'] ?? '';
@@ -38,7 +29,7 @@ try {
         INNER JOIN tasks t ON s.task_id = t.id
         WHERE s.id = ? AND t.instructor_id = ?
     ");
-    $stmt->execute([$submission_id, $instructor['staff_id']]);
+    $stmt->execute([$submission_id, $instructor_id]);
     
     if (!$stmt->fetch()) {
         throw new Exception('Submission not found or access denied');
@@ -51,7 +42,7 @@ try {
             graded_at = NOW(), graded_by = ?
         WHERE id = ?
     ");
-    $stmt->execute([$grade, $letter_grade, $feedback, $instructor['staff_id'], $submission_id]);
+    $stmt->execute([$grade, $letter_grade, $feedback, $instructor_id, $submission_id]);
 
     echo json_encode([
         'success' => true,

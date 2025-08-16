@@ -228,7 +228,6 @@ if ($student) {
                                     <th>Course Name</th>
                                     <th>Credits</th>
                                     <th>Instructor</th>
-                                    <th>Schedule</th>
                                     <th>Enrolled</th>
                                     <th>Status</th>
                                     <th>Actions</th>
@@ -481,7 +480,7 @@ if ($student) {
                         fetchGrades()
                     ]);
                     renderDashboard();
-                    showNotification('Dashboard loaded successfully!', 'success');
+                    // showNotification('Dashboard loaded successfully!', 'success');
                 } catch (error) {
                     console.error('Initialization error:', error);
                     showNotification('Error loading dashboard data: ' + error.message, 'error');
@@ -793,28 +792,27 @@ if ($student) {
             }
 
             function renderCourseRegistration() {
-                if (!coursesTableBody) return;
-                
-                coursesTableBody.innerHTML = availableCourses.map(course => `
-                    <tr>
-                        <td><input type="checkbox" value="${course.id}" 
-                            ${enrolledCourses.has(course.id) ? 'disabled' : ''} 
-                            onchange="handleCourseSelection('${course.id}')"></td>
-                        <td>${course.code}</td>
-                        <td>${course.name}</td>
-                        <td>${course.credits}</td>
-                        <td>${course.instructor}</td>
-                        <td>${course.schedule}</td>
-                        <td>${course.enrolled || 0}/${course.capacity || 'N/A'}</td>
-                        <td>${enrolledCourses.has(course.id) ? 'Enrolled' : 'Available'}</td>
-                        <td>
-                            <button class="btn-small" onclick="viewCourseDetails('${course.id}')">
-                                Details
-                            </button>
-                        </td>
-                    </tr>
-                `).join('');
-            }
+    if (!coursesTableBody) return;
+    
+    coursesTableBody.innerHTML = availableCourses.map(course => `
+        <tr>
+            <td><input type="checkbox" value="${course.id}" 
+                ${enrolledCourses.has(course.id) ? 'disabled' : ''} 
+                onchange="handleCourseSelection('${course.id}')"></td>
+            <td>${course.course_code}</td>
+            <td>${course.course_name}</td>
+            <td>${course.credits}</td>
+            <td>${course.instructor || 'Not assigned'}</td>
+            <td>${course.enrolled_count || 0}</td>
+            <td>${enrolledCourses.has(course.id) ? 'Enrolled' : 'Available'}</td>
+            <td>
+                <button class="btn-small" onclick="viewCourseDetails('${course.id}')">
+                    Details
+                </button>
+            </td>
+        </tr>
+    `).join('');
+}
 
             function renderMyCourses() {
                 if (!myCoursesGrid) return;
@@ -824,7 +822,6 @@ if ($student) {
                         <h3>${course.name}</h3>
                         <p><strong>Code:</strong> ${course.code}</p>
                         <p><strong>Instructor:</strong> ${course.instructor}</p>
-                        <p><strong>Schedule:</strong> ${course.schedule}</p>
                         <div class="course-actions">
                             <button class="btn-small" onclick="viewCourseDetails('${course.id}')">
                                 View Details

@@ -41,6 +41,15 @@ if (isset($_SESSION['user_id'])) {
 //     // Implement your mail sending logic here
 //     // mail($email, "Password Reset", "Reset link: ...?token=$token");
 // }
+$programs = [];
+try {
+    $stmt = $pdo->query("SELECT program_id, program_name FROM programs ORDER BY program_name");
+    $programs = $stmt->fetchAll(PDO::FETCH_ASSOC);
+} catch (PDOException $e) {
+    error_log("Error fetching programs: " . $e->getMessage());
+    // Fallback to empty array
+    $programs = [];
+}
 
 function getCurrentAcademicYear() {
     $currentMonth = date('n'); // Get current month (1-12)
@@ -464,15 +473,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <input type="email" name="email" placeholder="Enter your email" required>
             </div>
             <div class="form-group">
-                <label>Program</label>
-                <select name="program" class="form-select" required>
-                    <option value="">Select Program</option>
-                    <option value="Computer Science">Computer Science</option>
-                    <option value="Information Technology">Information Technology</option>
-                    <option value="Software Engineering">Software Engineering</option>
-                    <option value="Data Science">Data Science</option>
-                </select>
-            </div>
+    <label>Program</label>
+    <select name="program" class="form-select" required>
+        <option value="">Select Program</option>
+        <?php foreach ($programs as $program): ?>
+            <option value="<?php echo htmlspecialchars($program['program_name']); ?>">
+                <?php echo htmlspecialchars($program['program_name']); ?>
+            </option>
+        <?php endforeach; ?>
+    </select>
+</div>
             <div class="form-group">
                 <label>Level</label>
                 <select name="level" class="form-select" required>

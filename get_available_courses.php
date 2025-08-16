@@ -12,7 +12,7 @@ if (!$student_id) {
 }
 
 try {
-    // Get student's program and semester
+    // Get student's program name and semester
     $stmt = $pdo->prepare("
         SELECT s.program, s.semester 
         FROM students s 
@@ -33,9 +33,8 @@ try {
             c.course_code,
             c.course_name,
             c.credits,
-            c.schedule,
             c.description,
-            c.program,
+            p.program_name as program, 
             c.semester,
             a.fullname as instructor,
             (SELECT COUNT(*) FROM course_enrollments WHERE course_code = c.course_code) as enrolled_count,
@@ -44,8 +43,9 @@ try {
                 WHERE course_code = c.course_code AND accounts_id = ?
             ) as is_enrolled
         FROM courses c
+        JOIN programs p ON c.program = p.program_id 
         LEFT JOIN accounts a ON c.instructor_id = a.accounts_id
-        WHERE (c.program = ? OR c.program = 'General')
+        WHERE p.program_name = ?  
         AND c.semester = ?
         AND c.course_code NOT IN (
             SELECT course_code FROM course_enrollments 
@@ -56,7 +56,7 @@ try {
     
     $stmt->execute([
         $student_id,
-        $student['program'],
+        $student['program'],  // This is the program NAME from students table
         $student['semester'],
         $student_id
     ]);
